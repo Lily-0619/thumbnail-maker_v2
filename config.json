@@ -1,0 +1,12 @@
+{
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "fonts": {
+    "default": "assets/fonts/NotoSansJP-Bold.ttf",
+    "fallback": "C:/Windows/Fonts/meiryo.ttc"
+  },
+  "output_dir": "outputs",
+  "assets_dir": "assets"
+}

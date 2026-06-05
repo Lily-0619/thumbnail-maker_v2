@@ -1,0 +1,57 @@
+{
+  "template_name": "node_war_default",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "text": {
+    "date": {
+      "x": 80,
+      "y": 60,
+      "font_size": 64,
+      "color": "#ffffff",
+      "stroke_color": "#000000",
+      "stroke_width": 4,
+      "glow": false
+    },
+    "node_name": {
+      "x": 80,
+      "y": 140,
+      "font_size": 96,
+      "color": "#d8b15a",
+      "stroke_color": "#1a1208",
+      "stroke_width": 6,
+      "glow": true
+    },
+    "guilds": {
+      "x": 80,
+      "y": 820,
+      "font_size": 56,
+      "line_spacing": 10,
+      "color": "#ffffff",
+      "stroke_color": "#000000",
+      "stroke_width": 4,
+      "glow": false
+    }
+  },
+  "character": {
+    "position": "right",
+    "scale": 1.0,
+    "offset_x": 0,
+    "offset_y": 0
+  },
+  "back_effect": {
+    "type": "blue_purple_magic",
+    "x": 0,
+    "y": 0,
+    "scale": 1.0,
+    "opacity": 0.85
+  },
+  "foreground_effect": {
+    "enabled": false
+  },
+  "background": {
+    "type": "dark_castle",
+    "overlay_opacity": 0.3
+  }
+}
