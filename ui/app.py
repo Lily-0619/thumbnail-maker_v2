@@ -14,7 +14,11 @@ import customtkinter as ctk
 
 from core.composer import compose_thumbnail
 from core.template import list_templates, load_template
-from core.text_renderer import LANGUAGE_FONT_CATEGORIES
+from core.text_renderer import (
+    LANGUAGE_FONT_CATEGORIES,
+    TEXT_ELEMENT_LABELS,
+    build_text_element_bounds,
+)
 from ui.preview import PreviewPanel
 
 
@@ -40,7 +44,7 @@ NODE_OPTIONS_PATH = Path("data/node_options.json")
 class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.2")
+        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.4")
         self.geometry("1500x900")
         self.resizable(True, True)
 
@@ -55,6 +59,8 @@ class ThumbnailApp(ctk.CTk):
         self.current_template = load_template("node_war_default")
         self.node_options = self._load_node_options()
         self._preview_image = None  # PIL Image キャッシュ
+        self.selected_text_key = None
+        self.selected_text_name = ctk.StringVar(value="選択中: なし")
         self.options_visible = False
 
         self._build_layout()
@@ -78,12 +84,22 @@ class ThumbnailApp(ctk.CTk):
         right.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=0)
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(1, weight=0)
+        right.rowconfigure(2, weight=1)
         self.preview = PreviewPanel(right, height=430)
         self.preview.grid(row=0, column=0, padx=10, pady=10, sticky="new")
-        ctk.CTkLabel(right, text="プレビューは右上に固定表示されます", text_color="gray").grid(
-            row=1, column=0, sticky="n", pady=(0, 10)
+        self.preview.set_callbacks(on_select=self._select_text_element, on_drag=self._drag_text_element)
+        ctk.CTkLabel(right, textvariable=self.selected_text_name, font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=1, column=0, sticky="n", pady=(0, 4)
         )
+        ctk.CTkLabel(
+            right,
+            text="プレビュー上の文字をクリックして選択 → 矢印キーで移動 / Shift+矢印で10px移動 / Ctrl+上下でサイズ変更 / ドラッグで移動",
+            text_color="gray",
+            wraplength=780,
+            justify="center",
+        ).grid(row=2, column=0, sticky="n", pady=(0, 10))
+        self.bind("<KeyPress>", self._on_key_press)
 
     def _build_form(self, parent):
         pad = {"padx": 10, "pady": 4}
@@ -380,6 +396,80 @@ class ThumbnailApp(ctk.CTk):
         entry.delete(0, "end")
         entry.insert(0, str(value))
 
+
+    def _text_control_map(self) -> dict:
+        return {
+            "date": {"x": self.date_x, "y": self.date_y, "size": self.date_size},
+            "node_name": {"x": self.node_x, "y": self.node_y, "size": self.node_size},
+            "subtitle": {"x": self.subtitle_x, "y": self.subtitle_y, "size": self.subtitle_size},
+            "guilds": {"x": self.guild_x, "y": self.guild_y, "size": self.guild_size},
+            "branding": {"x": self.branding_x, "y": self.branding_y, "size": self.branding_size},
+        }
+
+    def _select_text_element(self, key: str | None):
+        """プレビューでクリックされた文字要素を選択状態にする。"""
+        self.selected_text_key = key
+        if key:
+            self.selected_text_name.set(f"選択中: {TEXT_ELEMENT_LABELS.get(key, key)}")
+        else:
+            self.selected_text_name.set("選択中: なし")
+        if hasattr(self, "preview"):
+            self.preview.set_selected(key)
+
+    def _move_text_element(self, key: str, dx: int, dy: int, refresh: bool = True):
+        controls = self._text_control_map().get(key)
+        if not controls:
+            return
+        self._set_entry(controls["x"], self._int_value(controls["x"], 0) + dx)
+        self._set_entry(controls["y"], self._int_value(controls["y"], 0) + dy)
+        if refresh:
+            self._refresh_preview_after_text_edit()
+
+    def _resize_text_element(self, key: str, delta: int):
+        controls = self._text_control_map().get(key)
+        if not controls:
+            return
+        current = self._int_value(controls["size"], 1)
+        self._set_entry(controls["size"], max(1, current + delta))
+        self._refresh_preview_after_text_edit()
+
+    def _drag_text_element(self, key: str, dx: int, dy: int):
+        """プレビュー上のドラッグ量を元画像座標として反映する。"""
+        self._select_text_element(key)
+        self._move_text_element(key, dx, dy)
+
+    def _on_key_press(self, event):
+        """選択中の文字要素を矢印キーで移動し、Ctrl+上下でサイズを変える。"""
+        if not self.selected_text_key:
+            return
+        key_name = event.keysym
+        if key_name not in {"Up", "Down", "Left", "Right"}:
+            return
+
+        is_shift = bool(event.state & 0x0001)
+        is_ctrl = bool(event.state & 0x0004)
+        if is_ctrl and key_name in {"Up", "Down"}:
+            self._resize_text_element(self.selected_text_key, 1 if key_name == "Up" else -1)
+            return "break"
+
+        step = 10 if is_shift else 1
+        dx = 0
+        dy = 0
+        if key_name == "Up":
+            dy = -step
+        elif key_name == "Down":
+            dy = step
+        elif key_name == "Left":
+            dx = -step
+        elif key_name == "Right":
+            dx = step
+        self._move_text_element(self.selected_text_key, dx, dy)
+        return "break"
+
+    def _refresh_preview_after_text_edit(self):
+        self._preview()
+        self.preview.set_selected(self.selected_text_key)
+
     def _collect_params(self) -> dict:
         """UIの入力値をまとめてdictで返す。"""
         template = copy.deepcopy(self.current_template)
@@ -465,14 +555,25 @@ class ThumbnailApp(ctk.CTk):
             img = compose_thumbnail(**params)
             self._preview_image = img
             self.preview.show(img)
+            self.preview.set_text_elements(
+                build_text_element_bounds(
+                    params["date_str"],
+                    params["node_name"],
+                    params["guilds"],
+                    params["template"],
+                    params["font_path"],
+                    guild_font_paths=params["guild_font_paths"],
+                    language_font_paths=params["language_font_paths"],
+                )
+            )
+            self.preview.set_selected(self.selected_text_key)
         except Exception as e:
             messagebox.showerror("エラー", f"プレビュー生成に失敗しました:\n{e}")
 
     def _export(self):
+        self._preview()
         if self._preview_image is None:
-            self._preview()
-            if self._preview_image is None:
-                return
+            return
 
         name = self.output_name.get().strip()
         if not name:
