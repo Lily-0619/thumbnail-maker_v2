@@ -12,7 +12,7 @@ UIなしでコマンドラインからサムネイルを生成するスクリプ
         --date "2026.06.04" \
         --node "リンチファーム遺跡" \
         --guilds "GuildA" "GuildB" "GuildC" \
-        --font assets/fonts/NotoSansJP-Bold.ttf \
+        --font font/JP/NotoSansJP-VariableFont_wght.ttf \
         --guild-fonts assets/fonts/NotoSansJP-Bold.ttf assets/fonts/NotoSansJP-Bold.ttf \
         --font-ja assets/fonts/NotoSansJP-Bold.ttf \
         --template node_war_default \
@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument("--date", default="2026.06.04", help='日付文字列（例: "2026.06.04"）')
     parser.add_argument("--node", default="テスト拠点", help="拠点名")
     parser.add_argument("--guilds", nargs="*", default=[], help="ギルド名（スペース区切りで複数指定、最大5件）")
-    parser.add_argument("--font", default="assets/fonts/NotoSansJP-Bold.ttf", help="日付・拠点名・Node Warフォントパス")
+    parser.add_argument("--font", default="", help="日付・拠点名・Node Warフォントパス（空ならテンプレート設定）")
     parser.add_argument("--branding", default="Black Desert Mobile", help="右下に表示する文字")
     parser.add_argument("--branding-font", default="", help="右下表示用フォントパス（空なら--font）")
     parser.add_argument("--guild-fonts", nargs="*", default=[], help="ギルドごとの個別フォントパス（ギルド順、指定時は言語カテゴリより優先）")
@@ -52,15 +52,24 @@ def main():
     from core.template import load_template
 
     template = load_template(args.template)
+    font_path = args.font or template.get("font_path", "font/JP/NotoSansJP-VariableFont_wght.ttf")
+    guild_font_paths = args.guild_fonts or template.get("guild_font_paths", [])
     template.setdefault("branding", {}).update({"text": args.branding, "font_path": args.branding_font})
     guilds = [guild for guild in args.guilds[:5] if guild.strip()]
-    language_font_paths = {
-        "ja": args.font_ja,
-        "ru": args.font_ru,
-        "en": args.font_en,
-        "zh": args.font_zh,
-        "ko": args.font_ko,
-    }
+    language_font_paths = dict(template.get("language_fonts", {}))
+    language_font_paths.update(
+        {
+            key: value
+            for key, value in {
+                "ja": args.font_ja,
+                "ru": args.font_ru,
+                "en": args.font_en,
+                "zh": args.font_zh,
+                "ko": args.font_ko,
+            }.items()
+            if value
+        }
+    )
 
     print("[合成開始]")
     print(f"  背景          : {args.bg or '（なし）'}")
@@ -69,6 +78,7 @@ def main():
     print(f"  日付          : {args.date}")
     print(f"  拠点名        : {args.node}")
     print(f"  ギルド        : {guilds}")
+    print(f"  共通フォント  : {font_path or '（テンプレート未設定）'}")
 
     img = compose_thumbnail(
         bg_path=args.bg,
@@ -78,8 +88,8 @@ def main():
         node_name=args.node,
         guilds=guilds,
         template=template,
-        font_path=args.font,
-        guild_font_paths=args.guild_fonts,
+        font_path=font_path,
+        guild_font_paths=guild_font_paths,
         language_font_paths=language_font_paths,
     )
 

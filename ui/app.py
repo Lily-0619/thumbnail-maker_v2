@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from core.composer import compose_thumbnail
-from core.template import list_templates, load_template
+from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
     LANGUAGE_FONT_CATEGORIES,
     TEXT_ELEMENT_LABELS,
@@ -53,10 +53,11 @@ class ThumbnailApp(ctk.CTk):
         self.char_path = ctk.StringVar()
         # 後方エフェクトはAI生成前提。将来の生成処理からここへパスを入れる想定。
         self.effect_path = ctk.StringVar()
-        self.font_path = ctk.StringVar(value="assets/fonts/NotoSansJP-Bold.ttf")
+        self.font_path = ctk.StringVar(value="font/JP/NotoSansJP-VariableFont_wght.ttf")
         self.branding_font_path = ctk.StringVar(value="")
         self.branding_text = ctk.StringVar(value="Black Desert Mobile")
-        self.current_template = load_template("node_war_default")
+        self.current_template_name = "node_war_default"
+        self.current_template = load_template(self.current_template_name)
         self.node_options = self._load_node_options()
         self._preview_image = None  # PIL Image キャッシュ
         self.selected_text_key = None
@@ -175,7 +176,9 @@ class ThumbnailApp(ctk.CTk):
         ctk.CTkLabel(parent, text="📋 テンプレート", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         templates = list_templates() or ["node_war_default"]
         self.template_menu = ctk.CTkOptionMenu(parent, values=templates, command=self._load_template)
+        self.template_menu.set(self.current_template_name if self.current_template_name in templates else templates[0])
         self.template_menu.pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="💾 現在設定をテンプレ保存", command=self._save_current_template).pack(fill="x", **pad)
 
         ctk.CTkButton(
             parent,
@@ -343,11 +346,47 @@ class ThumbnailApp(ctk.CTk):
     # ──────────────────────────────────────────
 
     def _load_template(self, name: str):
+        self.current_template_name = name
         self.current_template = load_template(name)
         self._apply_template_to_controls()
         print(f"[テンプレート] {name} を読み込みました")
 
+    def _path_for_template(self, value: str) -> str:
+        """テンプレートへ保存するパス。アプリ内ファイルは相対パスにしてWindows/Mac間で使いやすくする。"""
+        value = value.strip()
+        if not value:
+            return ""
+        try:
+            path = Path(value)
+            if path.exists():
+                return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except (OSError, ValueError):
+            pass
+        return value
+
+    def _save_current_template(self):
+        """現在の文字位置・サイズ・フォント設定を選択中テンプレートへ保存する。"""
+        params = self._collect_params()
+        template = params["template"]
+        template["template_name"] = self.current_template_name
+        template["font_path"] = self._path_for_template(params["font_path"])
+        template["guild_font_paths"] = [
+            self._path_for_template(font_var.get()) for font_var in self.guild_font_paths
+        ]
+        template["language_fonts"] = {
+            key: self._path_for_template(font_var.get())
+            for key, font_var in self.language_font_paths.items()
+        }
+        branding = template.setdefault("branding", {})
+        branding["font_path"] = self._path_for_template(branding.get("font_path", ""))
+
+        save_template(self.current_template_name, template)
+        self.current_template = copy.deepcopy(template)
+        messagebox.showinfo("テンプレート保存", f"{self.current_template_name} に現在設定を保存しました。")
+        print(f"[テンプレート保存] {self.current_template_name}")
+
     def _apply_template_to_controls(self):
+        self.font_path.set(self.current_template.get("font_path", self.font_path.get()))
         self._set_entry(self.char_scale, self.current_template.get("character", {}).get("scale", 1.0))
 
         text_cfg = self.current_template.get("text", {})
@@ -375,6 +414,10 @@ class ThumbnailApp(ctk.CTk):
         language_fonts = self.current_template.get("language_fonts", {})
         for key, font_var in self.language_font_paths.items():
             font_var.set(language_fonts.get(key, ""))
+
+        guild_font_paths = self.current_template.get("guild_font_paths", [])
+        for index, font_var in enumerate(self.guild_font_paths):
+            font_var.set(guild_font_paths[index] if index < len(guild_font_paths) else "")
 
     # ──────────────────────────────────────────
     #  合成パラメータ収集
@@ -530,7 +573,14 @@ class ThumbnailApp(ctk.CTk):
         for entry, font_var in zip(self.guild_entries, self.guild_font_paths):
             if entry.get().strip():
                 guild_font_paths.append(font_var.get().strip())
-        language_font_paths = {key: var.get().strip() for key, var in self.language_font_paths.items() if var.get().strip()}
+        language_font_paths = {
+            key: var.get().strip()
+            for key, var in self.language_font_paths.items()
+            if var.get().strip()
+        }
+        template["font_path"] = self.font_path.get().strip()
+        template["guild_font_paths"] = guild_font_paths
+        template["language_fonts"] = language_font_paths
 
         return {
             "bg_path": self.bg_path.get(),

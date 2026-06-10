@@ -92,5 +92,7 @@
     "en": "",
     "zh": "",
     "ko": ""
-  }
+  },
+  "font_path": "font/JP/NotoSansJP-VariableFont_wght.ttf",
+  "guild_font_paths": []
 }
