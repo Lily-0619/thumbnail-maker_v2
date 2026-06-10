@@ -5,8 +5,101 @@ text_renderer.py
 """
 
 import os
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+
+LANGUAGE_FONT_CATEGORIES = {
+    "ja": {
+        "label": "日本語（🇯🇵）",
+        "fallbacks": [
+            "C:/Windows/Fonts/meiryo.ttc",
+            "C:/Windows/Fonts/yugothb.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        ],
+    },
+    "ru": {
+        "label": "キリル / ロシア語（🇷🇺）",
+        "fallbacks": [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ],
+    },
+    "en": {
+        "label": "アルファベット / 英語（🇺🇸）",
+        "fallbacks": [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ],
+    },
+    "zh": {
+        "label": "中国語（🇨🇳）",
+        "fallbacks": [
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        ],
+    },
+    "ko": {
+        "label": "ハングル / 韓国語（🇰🇷）",
+        "fallbacks": [
+            "C:/Windows/Fonts/malgun.ttf",
+            "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+            "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        ],
+    },
+}
+
+
+def detect_language_category(text: str) -> str:
+    """ギルド名の文字からフォントカテゴリを推定する。"""
+    has_han = False
+    for char in text:
+        code = ord(char)
+        if 0xAC00 <= code <= 0xD7AF or 0x1100 <= code <= 0x11FF:
+            return "ko"
+        if 0x0400 <= code <= 0x052F:
+            return "ru"
+        if 0x3040 <= code <= 0x30FF:
+            return "ja"
+        if 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF:
+            has_han = True
+    if has_han:
+        return "zh"
+    return "en"
+
+
+def _existing_path(paths: list[str]) -> str:
+    for path in paths:
+        if path and Path(path).exists():
+            return path
+    return ""
+
+
+def resolve_language_font_path(category: str, language_font_paths: dict | None, default_font_path: str) -> str:
+    """UI/テンプレート指定、カテゴリ別既定、共通既定の順でフォントパスを解決する。"""
+    if language_font_paths and language_font_paths.get(category):
+        return language_font_paths[category]
+
+    category_info = LANGUAGE_FONT_CATEGORIES.get(category, LANGUAGE_FONT_CATEGORIES["en"])
+    fallback = _existing_path(category_info["fallbacks"])
+    if fallback:
+        return fallback
+
+    return default_font_path
 
 
 def load_font(font_path: str, size: int) -> ImageFont.FreeTypeFont:
@@ -50,8 +143,25 @@ def draw_text_with_stroke(
     color: str = "#ffffff",
     stroke_color: str = "#000000",
     stroke_width: int = 4,
+    shadow_color: str = "#06101f",
+    shadow_offset: tuple[int, int] = (4, 4),
+    shadow_blur: int = 3,
 ) -> Image.Image:
-    """縁取り付きテキストを描画する。"""
+    """縁取り付きテキストを描画する。全テキストに薄い青黒い影も付ける。"""
+    if shadow_blur > 0 and text:
+        shadow_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow_layer)
+        shadow_draw.text(
+            (x + shadow_offset[0], y + shadow_offset[1]),
+            text,
+            font=font,
+            fill=hex_to_rgb(shadow_color) + (150,),
+            stroke_width=stroke_width,
+            stroke_fill=hex_to_rgb(shadow_color) + (150,),
+        )
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=shadow_blur))
+        image = Image.alpha_composite(image.convert("RGBA"), shadow_layer)
+
     draw = ImageDraw.Draw(image)
     rgb_color = hex_to_rgb(color)
     rgb_stroke = hex_to_rgb(stroke_color)
@@ -66,7 +176,6 @@ def draw_text_with_stroke(
     )
     return image
 
-
 def draw_text_with_glow(
     image: Image.Image,
     text: str,
@@ -74,9 +183,9 @@ def draw_text_with_glow(
     y: int,
     font: ImageFont.FreeTypeFont,
     color: str = "#d8b15a",
-    stroke_color: str = "#1a1208",
+    stroke_color: str = "#000000",
     stroke_width: int = 6,
-    glow_color: str = "#ffaa00",
+    glow_color: str = "#FFD76A",
     glow_radius: int = 18,
     glow_strength: float = 1.2,
 ) -> Image.Image:
@@ -114,10 +223,17 @@ def draw_text_with_glow(
     return result
 
 
-def _font_for_guild(guild_font_paths: list | None, index: int, default_font_path: str) -> str:
+def _font_for_guild(
+    guild: str,
+    guild_font_paths: list | None,
+    language_font_paths: dict | None,
+    index: int,
+    default_font_path: str,
+) -> str:
     if guild_font_paths and index < len(guild_font_paths) and guild_font_paths[index]:
         return guild_font_paths[index]
-    return default_font_path
+    category = detect_language_category(guild)
+    return resolve_language_font_path(category, language_font_paths, default_font_path)
 
 
 def render_all_text(
@@ -128,14 +244,19 @@ def render_all_text(
     template: dict,
     font_path: str,
     guild_font_paths: list | None = None,
+    language_font_paths: dict | None = None,
 ) -> Image.Image:
     """
     テンプレートに従いすべてのテキストを一括描画する。
 
-    日付と拠点名は同じフォントを使い、ギルド名はギルドごとに
-    別フォントを指定できる。
+    日付と拠点名、固定のNode Warは同じフォントを使い、ギルド名は
+    個別フォントまたは言語カテゴリ別フォントで描画する。
     """
     t = template.get("text", {})
+    shadow_cfg = t.get("shadow", {})
+    shadow_color = shadow_cfg.get("color", "#06101f")
+    shadow_offset = tuple(shadow_cfg.get("offset", [4, 4]))
+    shadow_blur = shadow_cfg.get("blur", 3)
 
     if date_str and "date" in t:
         cfg = t["date"]
@@ -146,9 +267,12 @@ def render_all_text(
             cfg.get("x", 80),
             cfg.get("y", 60),
             font,
-            cfg.get("color", "#ffffff"),
+            cfg.get("color", "#F5F5F5"),
             cfg.get("stroke_color", "#000000"),
             cfg.get("stroke_width", 4),
+            shadow_color,
+            shadow_offset,
+            shadow_blur,
         )
 
     if node_name and "node_name" in t:
@@ -161,9 +285,12 @@ def render_all_text(
                 cfg.get("x", 80),
                 cfg.get("y", 140),
                 font,
-                cfg.get("color", "#d8b15a"),
-                cfg.get("stroke_color", "#1a1208"),
+                cfg.get("color", "#E7B93E"),
+                cfg.get("stroke_color", "#000000"),
                 cfg.get("stroke_width", 6),
+                cfg.get("glow_color", "#FFD76A"),
+                cfg.get("glow_radius", 18),
+                cfg.get("glow_strength", 1.2),
             )
         else:
             image = draw_text_with_stroke(
@@ -172,10 +299,47 @@ def render_all_text(
                 cfg.get("x", 80),
                 cfg.get("y", 140),
                 font,
-                cfg.get("color", "#d8b15a"),
-                cfg.get("stroke_color", "#1a1208"),
+                cfg.get("color", "#E7B93E"),
+                cfg.get("stroke_color", "#000000"),
                 cfg.get("stroke_width", 6),
+                shadow_color,
+                shadow_offset,
+                shadow_blur,
             )
+
+    if "subtitle" in t:
+        cfg = t["subtitle"]
+        subtitle_text = cfg.get("text", "Node War")
+        if subtitle_text:
+            font = load_font(font_path, cfg.get("font_size", 75))
+            if cfg.get("glow", True):
+                image = draw_text_with_glow(
+                    image,
+                    subtitle_text,
+                    cfg.get("x", 100),
+                    cfg.get("y", 470),
+                    font,
+                    cfg.get("color", "#E7B93E"),
+                    cfg.get("stroke_color", "#000000"),
+                    cfg.get("stroke_width", 4),
+                    cfg.get("glow_color", "#FFD76A"),
+                    cfg.get("glow_radius", 12),
+                    cfg.get("glow_strength", 0.8),
+                )
+            else:
+                image = draw_text_with_stroke(
+                    image,
+                    subtitle_text,
+                    cfg.get("x", 100),
+                    cfg.get("y", 470),
+                    font,
+                    cfg.get("color", "#E7B93E"),
+                    cfg.get("stroke_color", "#000000"),
+                    cfg.get("stroke_width", 4),
+                    shadow_color,
+                    shadow_offset,
+                    shadow_blur,
+                )
 
     if guilds and "guilds" in t:
         cfg = t["guilds"]
@@ -185,16 +349,39 @@ def render_all_text(
         line_height = font_size + line_spacing
         clean_guilds = [guild.strip() for guild in guilds[:5] if guild.strip()]
         for i, guild in enumerate(clean_guilds):
-            guild_font = load_font(_font_for_guild(guild_font_paths, i, font_path), font_size)
+            guild_font = load_font(_font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path), font_size)
             image = draw_text_with_stroke(
                 image,
                 guild,
                 cfg.get("x", 80),
                 base_y + i * line_height,
                 guild_font,
-                cfg.get("color", "#ffffff"),
+                cfg.get("color", "#F4F4F4"),
                 cfg.get("stroke_color", "#000000"),
                 cfg.get("stroke_width", 4),
+                shadow_color,
+                shadow_offset,
+                shadow_blur,
+            )
+
+    branding_cfg = template.get("branding", {})
+    if branding_cfg.get("enabled", True) and branding_cfg.get("type", "text") == "text":
+        branding_text = branding_cfg.get("text", "Black Desert Mobile")
+        if branding_text:
+            brand_font_path = branding_cfg.get("font_path") or font_path
+            brand_font = load_font(brand_font_path, branding_cfg.get("font_size", 46))
+            image = draw_text_with_stroke(
+                image,
+                branding_text,
+                branding_cfg.get("x", 1320),
+                branding_cfg.get("y", 980),
+                brand_font,
+                branding_cfg.get("color", "#F4F4F4"),
+                branding_cfg.get("stroke_color", "#000000"),
+                branding_cfg.get("stroke_width", 3),
+                shadow_color,
+                shadow_offset,
+                shadow_blur,
             )
 
     return image

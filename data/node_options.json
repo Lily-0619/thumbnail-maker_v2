@@ -1,9 +1,9 @@
 {
-  "monday": ["月曜拠点A", "月曜拠点B"],
-  "tuesday": ["火曜拠点A", "火曜拠点B"],
-  "wednesday": ["水曜拠点A", "水曜拠点B"],
-  "thursday": ["木曜拠点A", "木曜拠点B"],
-  "friday": ["金曜拠点A", "金曜拠点B"],
-  "saturday": ["土曜拠点A", "土曜拠点B"],
-  "sunday": ["日曜拠点A", "日曜拠点B"]
+  "monday": ["Ehwaz Hill", "Kasula Farm","Forest of Seclusion","Highlands","Rhutum Outstation","Kaia Pier","Castle Ruins Entrance","Velia Farmlands","Quint Hill","Ahto Farm"],
+  "tuesday": [],
+  "wednesday": [],
+  "thursday": ["Plains of Agris","Bradie Fortress","Marni's Second Lab","Treant Forest","Lynch Farm Ruins","Northern Plantation","Hidden Monastery","Anti-troll Fortification","Crioville"],
+  "friday": ["Orc Camp","Abandoned Iron Mine","Bree Tree Forest","Altar of Agris","Northern Quarry","Harpy Cliff","Naga Extraction Mill","Inner Mansha Forest"],
+  "saturday": ["Calpheon Siege War", "Valencian Siege War"],
+  "sunday": ["Forest of Plunder","Naga Swamplands","Dernyl Farm","Forsaken Lands","Cursed Lands","Old Dandelion","Behr River Downstream","Altinova Entrance"]
 }

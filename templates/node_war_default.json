@@ -5,30 +5,51 @@
     "height": 1080
   },
   "text": {
+    "shadow": {
+      "color": "#06101F",
+      "offset": [4, 4],
+      "blur": 3
+    },
     "date": {
-      "x": 80,
+      "x": 100,
       "y": 60,
-      "font_size": 64,
-      "color": "#ffffff",
+      "font_size": 70,
+      "color": "#F5F5F5",
       "stroke_color": "#000000",
       "stroke_width": 4,
       "glow": false
     },
     "node_name": {
-      "x": 80,
-      "y": 140,
-      "font_size": 96,
-      "color": "#d8b15a",
-      "stroke_color": "#1a1208",
+      "x": 100,
+      "y": 300,
+      "font_size": 170,
+      "color": "#E7B93E",
+      "stroke_color": "#000000",
       "stroke_width": 6,
-      "glow": true
+      "glow": true,
+      "glow_color": "#FFD76A",
+      "glow_radius": 18,
+      "glow_strength": 1.2
+    },
+    "subtitle": {
+      "text": "Node War",
+      "x": 100,
+      "y": 470,
+      "font_size": 75,
+      "color": "#E7B93E",
+      "stroke_color": "#000000",
+      "stroke_width": 4,
+      "glow": true,
+      "glow_color": "#FFD76A",
+      "glow_radius": 12,
+      "glow_strength": 0.8
     },
     "guilds": {
-      "x": 80,
-      "y": 820,
-      "font_size": 56,
+      "x": 100,
+      "y": 300,
+      "font_size": 75,
       "line_spacing": 10,
-      "color": "#ffffff",
+      "color": "#F4F4F4",
       "stroke_color": "#000000",
       "stroke_width": 4,
       "glow": false
@@ -41,17 +62,35 @@
     "offset_y": 0
   },
   "back_effect": {
-    "type": "blue_purple_magic",
-    "x": 0,
-    "y": 0,
-    "scale": 1.0,
+    "type": "ai_generated_with_background",
     "opacity": 0.85
   },
   "foreground_effect": {
     "enabled": false
   },
+  "branding": {
+    "enabled": true,
+    "type": "text",
+    "text": "Black Desert Mobile",
+    "font_path": "",
+    "x": 1320,
+    "y": 980,
+    "font_size": 46,
+    "color": "#F4F4F4",
+    "stroke_color": "#000000",
+    "stroke_width": 3,
+    "logo_path": ""
+  },
   "background": {
     "type": "dark_castle",
-    "overlay_opacity": 0.3
+    "overlay_opacity": 0.3,
+    "random_dir": "assets/backgrounds"
+  },
+  "language_fonts": {
+    "ja": "",
+    "ru": "",
+    "en": "",
+    "zh": "",
+    "ko": ""
   }
 }

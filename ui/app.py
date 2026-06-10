@@ -3,15 +3,18 @@ app.py
 customtkinter を使ったメインUIウィンドウ。
 """
 
+import copy
 import json
+import re
 from datetime import date
 from pathlib import Path
-from tkinter import colorchooser, filedialog, messagebox
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
 from core.composer import compose_thumbnail
 from core.template import list_templates, load_template
+from core.text_renderer import LANGUAGE_FONT_CATEGORIES
 from ui.preview import PreviewPanel
 
 
@@ -37,22 +40,26 @@ NODE_OPTIONS_PATH = Path("data/node_options.json")
 class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("黒砂漠モバイル サムネイル自動生成アプリ")
+        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.2")
         self.geometry("1500x900")
         self.resizable(True, True)
 
         # ── 内部状態 ──
         self.bg_path = ctk.StringVar()
         self.char_path = ctk.StringVar()
+        # 後方エフェクトはAI生成前提。将来の生成処理からここへパスを入れる想定。
         self.effect_path = ctk.StringVar()
         self.font_path = ctk.StringVar(value="assets/fonts/NotoSansJP-Bold.ttf")
-        self.text_color = ctk.StringVar(value="#d8b15a")
-        self.stroke_color = ctk.StringVar(value="#1a1208")
+        self.branding_font_path = ctk.StringVar(value="")
+        self.branding_text = ctk.StringVar(value="Black Desert Mobile")
         self.current_template = load_template("node_war_default")
         self.node_options = self._load_node_options()
         self._preview_image = None  # PIL Image キャッシュ
+        self.options_visible = False
 
         self._build_layout()
+        self._bind_auto_output_name()
+        self._update_output_name()
 
     # ──────────────────────────────────────────
     #  レイアウト構築
@@ -69,8 +76,14 @@ class ThumbnailApp(ctk.CTk):
 
         right = ctk.CTkFrame(self)
         right.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
-        self.preview = PreviewPanel(right)
-        self.preview.pack(fill="both", expand=True)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=0)
+        right.rowconfigure(1, weight=1)
+        self.preview = PreviewPanel(right, height=430)
+        self.preview.grid(row=0, column=0, padx=10, pady=10, sticky="new")
+        ctk.CTkLabel(right, text="プレビューは右上に固定表示されます", text_color="gray").grid(
+            row=1, column=0, sticky="n", pady=(0, 10)
+        )
 
     def _build_form(self, parent):
         pad = {"padx": 10, "pady": 4}
@@ -97,6 +110,11 @@ class ThumbnailApp(ctk.CTk):
         self.node_entry.pack(fill="x", **pad)
         self._set_node_menu_values(current_weekday)
 
+        # 出力ファイル名は、日付・拠点候補の下、ギルド名入力の上へ移動。
+        ctk.CTkLabel(parent, text="💾 出力ファイル名", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.output_name = ctk.CTkEntry(parent, placeholder_text="20260609_node")
+        self.output_name.pack(fill="x", **pad)
+
         ctk.CTkLabel(parent, text="⚔️ ギルド名（最大5つ・空欄は無視）", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.guild_entries = []
         self.guild_font_paths = []
@@ -112,67 +130,36 @@ class ThumbnailApp(ctk.CTk):
             self.guild_font_paths.append(font_var)
 
         ctk.CTkLabel(parent, text="🖼️ 背景画像", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="未選択").pack(fill="x", **pad)
+        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="未選択なら所定フォルダからランダム").pack(fill="x", **pad)
         ctk.CTkButton(parent, text="背景を選択", command=self._select_bg).pack(fill="x", **pad)
-
-        ctk.CTkLabel(parent, text="✨ 後方エフェクト画像", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.effect_path, placeholder_text="未選択").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="後方エフェクトを選択", command=self._select_effect).pack(fill="x", **pad)
 
         ctk.CTkLabel(parent, text="🧙 キャラクター画像", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkEntry(parent, textvariable=self.char_path, placeholder_text="未選択").pack(fill="x", **pad)
         ctk.CTkButton(parent, text="キャラを選択", command=self._select_char).pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="📐 キャラ配置", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.char_pos = ctk.CTkOptionMenu(parent, values=["right", "left", "center"])
-        self.char_pos.set("right")
-        self.char_pos.pack(fill="x", **pad)
-        self.char_x = self._build_number_row(parent, "キャラX座標", "0")
-        self.char_y = self._build_number_row(parent, "キャラY座標", "0")
-        self.char_scale = self._build_number_row(parent, "キャラ拡大率", "1.0")
+        ctk.CTkLabel(parent, text="✨ 後方エフェクト", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(
+            parent,
+            text="後方エフェクトは今後、背景生成開始時にキャラクターへ合わせてAI生成する想定です。位置・サイズ・透明度の手動調整はv0.2.2で削除しました。",
+            text_color="gray",
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", **pad)
 
-        ctk.CTkLabel(parent, text="✨ 後方エフェクト微調整", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.effect_x = self._build_number_row(parent, "後方エフェクトX座標", "0")
-        self.effect_y = self._build_number_row(parent, "後方エフェクトY座標", "0")
-        self.effect_scale = self._build_number_row(parent, "後方エフェクト拡大率", "1.0")
-        self.effect_opacity = self._build_number_row(parent, "後方エフェクト透明度", "0.85")
+        ctk.CTkButton(
+            parent,
+            text="⚙️ オプションを開く",
+            height=38,
+            command=self._toggle_options,
+        ).pack(fill="x", padx=10, pady=(12, 4))
 
-        ctk.CTkLabel(parent, text="🔤 日付・拠点名フォント", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.font_path, placeholder_text="fonts/NotoSansJP-Bold.ttf").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="フォントを選択", command=self._select_font).pack(fill="x", **pad)
-
-        ctk.CTkLabel(parent, text="🎨 拠点名カラー", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        color_row = ctk.CTkFrame(parent)
-        color_row.pack(fill="x", **pad)
-        ctk.CTkEntry(color_row, textvariable=self.text_color, width=100).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(color_row, text="色を選ぶ", width=80, command=self._pick_text_color).pack(side="left")
-
-        ctk.CTkLabel(parent, text="🖊️ 縁取りカラー", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        stroke_row = ctk.CTkFrame(parent)
-        stroke_row.pack(fill="x", **pad)
-        ctk.CTkEntry(stroke_row, textvariable=self.stroke_color, width=100).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(stroke_row, text="色を選ぶ", width=80, command=self._pick_stroke_color).pack(side="left")
-
-        ctk.CTkLabel(parent, text="📝 文字位置・サイズ", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.date_x = self._build_number_row(parent, "日付X", "80")
-        self.date_y = self._build_number_row(parent, "日付Y", "60")
-        self.date_size = self._build_number_row(parent, "日付サイズ", "64")
-        self.node_x = self._build_number_row(parent, "拠点名X", "80")
-        self.node_y = self._build_number_row(parent, "拠点名Y", "140")
-        self.node_size = self._build_number_row(parent, "拠点名サイズ", "96")
-        self.guild_x = self._build_number_row(parent, "ギルド名X", "80")
-        self.guild_y = self._build_number_row(parent, "ギルド名Y", "820")
-        self.guild_size = self._build_number_row(parent, "ギルド名サイズ", "56")
-        self.guild_line_spacing = self._build_number_row(parent, "ギルド名行間", "10")
+        self.options_frame = ctk.CTkFrame(parent)
+        self._build_options(self.options_frame)
 
         ctk.CTkLabel(parent, text="📋 テンプレート", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         templates = list_templates() or ["node_war_default"]
         self.template_menu = ctk.CTkOptionMenu(parent, values=templates, command=self._load_template)
         self.template_menu.pack(fill="x", **pad)
-
-        ctk.CTkLabel(parent, text="💾 出力ファイル名", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.output_name = ctk.CTkEntry(parent, placeholder_text="20260604_LynchFarmRuins")
-        self.output_name.pack(fill="x", **pad)
 
         ctk.CTkButton(
             parent,
@@ -192,6 +179,55 @@ class ThumbnailApp(ctk.CTk):
             command=self._export,
         ).pack(fill="x", padx=10, pady=4)
 
+    def _build_options(self, parent):
+        pad = {"padx": 10, "pady": 4}
+
+        ctk.CTkLabel(parent, text="🌐 ギルド名カテゴリ別フォント", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(
+            parent,
+            text="個別フォント欄が空なら、ギルド名から言語カテゴリを自動判定して下のフォントを使います。",
+            text_color="gray",
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", **pad)
+        self.language_font_paths = {}
+        for key in ["ja", "ru", "en", "zh", "ko"]:
+            row = ctk.CTkFrame(parent)
+            row.pack(fill="x", **pad)
+            ctk.CTkLabel(row, text=LANGUAGE_FONT_CATEGORIES[key]["label"], width=155, anchor="w").pack(side="left", padx=(0, 6))
+            font_var = ctk.StringVar(value="")
+            ctk.CTkEntry(row, textvariable=font_var, placeholder_text="未指定ならOS標準候補", width=170).pack(side="left", fill="x", expand=True, padx=(0, 6))
+            ctk.CTkButton(row, text="選択", width=54, command=lambda v=font_var: self._select_font_var(v)).pack(side="left")
+            self.language_font_paths[key] = font_var
+
+        ctk.CTkLabel(parent, text="🔤 共通フォント / 右下表示", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(parent, textvariable=self.font_path, placeholder_text="日付・拠点名・Node War用フォント").pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="共通フォントを選択", command=self._select_font).pack(fill="x", **pad)
+        ctk.CTkEntry(parent, textvariable=self.branding_text, placeholder_text="右下表示テキスト").pack(fill="x", **pad)
+        ctk.CTkEntry(parent, textvariable=self.branding_font_path, placeholder_text="右下表示フォント（空なら共通フォント）").pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="右下表示フォントを選択", command=lambda: self._select_font_var(self.branding_font_path)).pack(fill="x", **pad)
+
+        ctk.CTkLabel(parent, text="📐 キャラ拡大率（右側固定）", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.char_scale = self._build_number_row(parent, "キャラ拡大率", "1.0")
+
+        ctk.CTkLabel(parent, text="📝 文字位置・サイズ", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.date_x = self._build_number_row(parent, "日付X", "100")
+        self.date_y = self._build_number_row(parent, "日付Y", "60")
+        self.date_size = self._build_number_row(parent, "日付サイズ", "70")
+        self.node_x = self._build_number_row(parent, "拠点名X", "100")
+        self.node_y = self._build_number_row(parent, "拠点名Y", "300")
+        self.node_size = self._build_number_row(parent, "拠点名サイズ", "170")
+        self.subtitle_x = self._build_number_row(parent, "Node War X", "100")
+        self.subtitle_y = self._build_number_row(parent, "Node War Y", "470")
+        self.subtitle_size = self._build_number_row(parent, "Node Warサイズ", "75")
+        self.guild_x = self._build_number_row(parent, "ギルド名X", "100")
+        self.guild_y = self._build_number_row(parent, "ギルド名Y", "300")
+        self.guild_size = self._build_number_row(parent, "ギルド名サイズ", "75")
+        self.guild_line_spacing = self._build_number_row(parent, "ギルド名行間", "10")
+        self.branding_x = self._build_number_row(parent, "右下表示X", "1320")
+        self.branding_y = self._build_number_row(parent, "右下表示Y", "980")
+        self.branding_size = self._build_number_row(parent, "右下表示サイズ", "46")
+
     def _build_number_row(self, parent, label: str, default: str) -> ctk.CTkEntry:
         row = ctk.CTkFrame(parent)
         row.pack(fill="x", padx=10, pady=2)
@@ -200,6 +236,13 @@ class ThumbnailApp(ctk.CTk):
         entry.insert(0, default)
         entry.pack(side="left", fill="x", expand=True)
         return entry
+
+    def _toggle_options(self):
+        self.options_visible = not self.options_visible
+        if self.options_visible:
+            self.options_frame.pack(fill="x", padx=10, pady=8)
+        else:
+            self.options_frame.pack_forget()
 
     # ──────────────────────────────────────────
     #  ファイル選択
@@ -218,11 +261,6 @@ class ThumbnailApp(ctk.CTk):
         if p:
             self.char_path.set(p)
 
-    def _select_effect(self):
-        p = filedialog.askopenfilename(title="後方エフェクト画像を選択", filetypes=[("PNG画像（透過）", "*.png"), ("すべて", "*.*")])
-        if p:
-            self.effect_path.set(p)
-
     def _select_font(self):
         self._select_font_var(self.font_path)
 
@@ -234,18 +272,8 @@ class ThumbnailApp(ctk.CTk):
         if p:
             font_var.set(p)
 
-    def _pick_text_color(self):
-        color = colorchooser.askcolor(title="拠点名カラーを選択", color=self.text_color.get())
-        if color[1]:
-            self.text_color.set(color[1])
-
-    def _pick_stroke_color(self):
-        color = colorchooser.askcolor(title="縁取りカラーを選択", color=self.stroke_color.get())
-        if color[1]:
-            self.stroke_color.set(color[1])
-
     # ──────────────────────────────────────────
-    #  曜日別拠点候補
+    #  曜日別拠点候補 / 出力名
     # ──────────────────────────────────────────
 
     def _load_node_options(self) -> dict:
@@ -270,12 +298,29 @@ class ThumbnailApp(ctk.CTk):
 
     def _on_weekday_changed(self, label: str):
         self._set_node_menu_values(self._weekday_key_from_label(label))
+        self._update_output_name()
 
     def _on_node_selected(self, node_name: str):
         if node_name == "未設定":
             return
         self.node_entry.delete(0, "end")
         self.node_entry.insert(0, node_name)
+        self._update_output_name()
+
+    def _bind_auto_output_name(self):
+        self.date_entry.bind("<KeyRelease>", lambda _event: self._update_output_name())
+        self.node_entry.bind("<KeyRelease>", lambda _event: self._update_output_name())
+
+    def _safe_filename_part(self, value: str) -> str:
+        value = value.strip().replace(" ", "_").replace("　", "_")
+        value = re.sub(r'[\\/:*?"<>|]+', "_", value)
+        return value or "thumbnail"
+
+    def _update_output_name(self):
+        date_part = self.date_entry.get().replace(".", "") or date.today().strftime("%Y%m%d")
+        node_part = self._safe_filename_part(self.node_entry.get())
+        self.output_name.delete(0, "end")
+        self.output_name.insert(0, f"{date_part}_{node_part}")
 
     # ──────────────────────────────────────────
     #  テンプレート読み込み
@@ -288,27 +333,32 @@ class ThumbnailApp(ctk.CTk):
 
     def _apply_template_to_controls(self):
         self._set_entry(self.char_scale, self.current_template.get("character", {}).get("scale", 1.0))
-        self._set_entry(self.char_x, self.current_template.get("character", {}).get("offset_x", 0))
-        self._set_entry(self.char_y, self.current_template.get("character", {}).get("offset_y", 0))
-        self.char_pos.set(self.current_template.get("character", {}).get("position", "right"))
-
-        effect_cfg = self.current_template.get("back_effect", self.current_template.get("effect", {}))
-        self._set_entry(self.effect_x, effect_cfg.get("x", 0))
-        self._set_entry(self.effect_y, effect_cfg.get("y", 0))
-        self._set_entry(self.effect_scale, effect_cfg.get("scale", 1.0))
-        self._set_entry(self.effect_opacity, effect_cfg.get("opacity", 0.85))
 
         text_cfg = self.current_template.get("text", {})
-        self._set_entry(self.date_x, text_cfg.get("date", {}).get("x", 80))
+        self._set_entry(self.date_x, text_cfg.get("date", {}).get("x", 100))
         self._set_entry(self.date_y, text_cfg.get("date", {}).get("y", 60))
-        self._set_entry(self.date_size, text_cfg.get("date", {}).get("font_size", 64))
-        self._set_entry(self.node_x, text_cfg.get("node_name", {}).get("x", 80))
-        self._set_entry(self.node_y, text_cfg.get("node_name", {}).get("y", 140))
-        self._set_entry(self.node_size, text_cfg.get("node_name", {}).get("font_size", 96))
-        self._set_entry(self.guild_x, text_cfg.get("guilds", {}).get("x", 80))
-        self._set_entry(self.guild_y, text_cfg.get("guilds", {}).get("y", 820))
-        self._set_entry(self.guild_size, text_cfg.get("guilds", {}).get("font_size", 56))
+        self._set_entry(self.date_size, text_cfg.get("date", {}).get("font_size", 70))
+        self._set_entry(self.node_x, text_cfg.get("node_name", {}).get("x", 100))
+        self._set_entry(self.node_y, text_cfg.get("node_name", {}).get("y", 300))
+        self._set_entry(self.node_size, text_cfg.get("node_name", {}).get("font_size", 170))
+        self._set_entry(self.subtitle_x, text_cfg.get("subtitle", {}).get("x", 100))
+        self._set_entry(self.subtitle_y, text_cfg.get("subtitle", {}).get("y", 470))
+        self._set_entry(self.subtitle_size, text_cfg.get("subtitle", {}).get("font_size", 75))
+        self._set_entry(self.guild_x, text_cfg.get("guilds", {}).get("x", 100))
+        self._set_entry(self.guild_y, text_cfg.get("guilds", {}).get("y", 300))
+        self._set_entry(self.guild_size, text_cfg.get("guilds", {}).get("font_size", 75))
         self._set_entry(self.guild_line_spacing, text_cfg.get("guilds", {}).get("line_spacing", 10))
+
+        branding_cfg = self.current_template.get("branding", {})
+        self.branding_text.set(branding_cfg.get("text", "Black Desert Mobile"))
+        self.branding_font_path.set(branding_cfg.get("font_path", ""))
+        self._set_entry(self.branding_x, branding_cfg.get("x", 1320))
+        self._set_entry(self.branding_y, branding_cfg.get("y", 980))
+        self._set_entry(self.branding_size, branding_cfg.get("font_size", 46))
+
+        language_fonts = self.current_template.get("language_fonts", {})
+        for key, font_var in self.language_font_paths.items():
+            font_var.set(language_fonts.get(key, ""))
 
     # ──────────────────────────────────────────
     #  合成パラメータ収集
@@ -332,48 +382,56 @@ class ThumbnailApp(ctk.CTk):
 
     def _collect_params(self) -> dict:
         """UIの入力値をまとめてdictで返す。"""
-        template = dict(self.current_template)
+        template = copy.deepcopy(self.current_template)
         text_cfg = template.setdefault("text", {})
 
         text_cfg.setdefault("date", {}).update(
             {
-                "x": self._int_value(self.date_x, 80),
+                "x": self._int_value(self.date_x, 100),
                 "y": self._int_value(self.date_y, 60),
-                "font_size": self._int_value(self.date_size, 64),
+                "font_size": self._int_value(self.date_size, 70),
             }
         )
         text_cfg.setdefault("node_name", {}).update(
             {
-                "x": self._int_value(self.node_x, 80),
-                "y": self._int_value(self.node_y, 140),
-                "font_size": self._int_value(self.node_size, 96),
-                "color": self.text_color.get(),
-                "stroke_color": self.stroke_color.get(),
+                "x": self._int_value(self.node_x, 100),
+                "y": self._int_value(self.node_y, 300),
+                "font_size": self._int_value(self.node_size, 170),
+            }
+        )
+        text_cfg.setdefault("subtitle", {}).update(
+            {
+                "text": "Node War",
+                "x": self._int_value(self.subtitle_x, 100),
+                "y": self._int_value(self.subtitle_y, 470),
+                "font_size": self._int_value(self.subtitle_size, 75),
             }
         )
         text_cfg.setdefault("guilds", {}).update(
             {
-                "x": self._int_value(self.guild_x, 80),
-                "y": self._int_value(self.guild_y, 820),
-                "font_size": self._int_value(self.guild_size, 56),
+                "x": self._int_value(self.guild_x, 100),
+                "y": self._int_value(self.guild_y, 300),
+                "font_size": self._int_value(self.guild_size, 75),
                 "line_spacing": self._int_value(self.guild_line_spacing, 10),
             }
         )
 
         template.setdefault("character", {}).update(
             {
-                "position": self.char_pos.get(),
-                "offset_x": self._int_value(self.char_x, 0),
-                "offset_y": self._int_value(self.char_y, 0),
+                "position": "right",
+                "offset_x": 0,
+                "offset_y": 0,
                 "scale": self._float_value(self.char_scale, 1.0),
             }
         )
-        template.setdefault("back_effect", {}).update(
+        template.setdefault("branding", {}).update(
             {
-                "x": self._int_value(self.effect_x, 0),
-                "y": self._int_value(self.effect_y, 0),
-                "scale": self._float_value(self.effect_scale, 1.0),
-                "opacity": self._float_value(self.effect_opacity, 0.85),
+                "type": "text",
+                "text": self.branding_text.get().strip() or "Black Desert Mobile",
+                "font_path": self.branding_font_path.get().strip(),
+                "x": self._int_value(self.branding_x, 1320),
+                "y": self._int_value(self.branding_y, 980),
+                "font_size": self._int_value(self.branding_size, 46),
             }
         )
 
@@ -382,6 +440,7 @@ class ThumbnailApp(ctk.CTk):
         for entry, font_var in zip(self.guild_entries, self.guild_font_paths):
             if entry.get().strip():
                 guild_font_paths.append(font_var.get().strip())
+        language_font_paths = {key: var.get().strip() for key, var in self.language_font_paths.items() if var.get().strip()}
 
         return {
             "bg_path": self.bg_path.get(),
@@ -393,6 +452,7 @@ class ThumbnailApp(ctk.CTk):
             "template": template,
             "font_path": self.font_path.get(),
             "guild_font_paths": guild_font_paths,
+            "language_font_paths": language_font_paths,
         }
 
     # ──────────────────────────────────────────
