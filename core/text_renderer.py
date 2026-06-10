@@ -236,6 +236,122 @@ def _font_for_guild(
     return resolve_language_font_path(category, language_font_paths, default_font_path)
 
 
+TEXT_ELEMENT_LABELS = {
+    "date": "日付",
+    "node_name": "拠点名",
+    "subtitle": "Node War",
+    "guilds": "ギルド名",
+    "branding": "右下表示テキスト",
+}
+
+
+def _text_bbox(text: str, x: int, y: int, font: ImageFont.FreeTypeFont, stroke_width: int = 0) -> tuple[int, int, int, int]:
+    """指定座標に描画した文字の当たり判定用矩形を返す。"""
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    bbox = draw.textbbox((int(x), int(y)), text, font=font, stroke_width=int(stroke_width))
+    padding = max(int(stroke_width), 4)
+    return (bbox[0] - padding, bbox[1] - padding, bbox[2] + padding, bbox[3] + padding)
+
+
+def build_text_element_bounds(
+    date_str: str,
+    node_name: str,
+    guilds: list,
+    template: dict,
+    font_path: str,
+    guild_font_paths: list | None = None,
+    language_font_paths: dict | None = None,
+) -> list[dict]:
+    """プレビュー上で文字を選択するための1920x1080基準の矩形を作る。"""
+    elements = []
+    t = template.get("text", {})
+
+    if date_str and "date" in t:
+        cfg = t["date"]
+        font = load_font(font_path, cfg.get("font_size", 64))
+        elements.append(
+            {
+                "key": "date",
+                "label": TEXT_ELEMENT_LABELS["date"],
+                "bbox": _text_bbox(date_str, cfg.get("x", 80), cfg.get("y", 60), font, cfg.get("stroke_width", 4)),
+            }
+        )
+
+    if node_name and "node_name" in t:
+        cfg = t["node_name"]
+        font = load_font(font_path, cfg.get("font_size", 96))
+        elements.append(
+            {
+                "key": "node_name",
+                "label": TEXT_ELEMENT_LABELS["node_name"],
+                "bbox": _text_bbox(node_name, cfg.get("x", 80), cfg.get("y", 140), font, cfg.get("stroke_width", 6)),
+            }
+        )
+
+    if "subtitle" in t:
+        cfg = t["subtitle"]
+        subtitle_text = cfg.get("text", "Node War")
+        if subtitle_text:
+            font = load_font(font_path, cfg.get("font_size", 75))
+            elements.append(
+                {
+                    "key": "subtitle",
+                    "label": TEXT_ELEMENT_LABELS["subtitle"],
+                    "bbox": _text_bbox(subtitle_text, cfg.get("x", 100), cfg.get("y", 470), font, cfg.get("stroke_width", 4)),
+                }
+            )
+
+    if guilds and "guilds" in t:
+        cfg = t["guilds"]
+        base_y = cfg.get("y", 900)
+        font_size = cfg.get("font_size", 64)
+        line_spacing = cfg.get("line_spacing", 12)
+        line_height = font_size + line_spacing
+        clean_guilds = [guild.strip() for guild in guilds[:5] if guild.strip()]
+        guild_boxes = []
+        for i, guild in enumerate(clean_guilds):
+            guild_font = load_font(_font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path), font_size)
+            guild_boxes.append(
+                _text_bbox(guild, cfg.get("x", 80), base_y + i * line_height, guild_font, cfg.get("stroke_width", 4))
+            )
+        if guild_boxes:
+            elements.append(
+                {
+                    "key": "guilds",
+                    "label": TEXT_ELEMENT_LABELS["guilds"],
+                    "bbox": (
+                        min(box[0] for box in guild_boxes),
+                        min(box[1] for box in guild_boxes),
+                        max(box[2] for box in guild_boxes),
+                        max(box[3] for box in guild_boxes),
+                    ),
+                }
+            )
+
+    branding_cfg = template.get("branding", {})
+    if branding_cfg.get("enabled", True) and branding_cfg.get("type", "text") == "text":
+        branding_text = branding_cfg.get("text", "Black Desert Mobile")
+        if branding_text:
+            brand_font_path = branding_cfg.get("font_path") or font_path
+            brand_font = load_font(brand_font_path, branding_cfg.get("font_size", 46))
+            elements.append(
+                {
+                    "key": "branding",
+                    "label": TEXT_ELEMENT_LABELS["branding"],
+                    "bbox": _text_bbox(
+                        branding_text,
+                        branding_cfg.get("x", 1320),
+                        branding_cfg.get("y", 980),
+                        brand_font,
+                        branding_cfg.get("stroke_width", 3),
+                    ),
+                }
+            )
+
+    return elements
+
+
 def render_all_text(
     image: Image.Image,
     date_str: str,
