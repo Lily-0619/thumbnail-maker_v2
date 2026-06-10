@@ -9,6 +9,14 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+DEFAULT_COMMON_FONT_PATH = "font/EN/Allura-Regular.ttf"
+DEFAULT_LANGUAGE_FONT_PATHS = {
+    "ja": "font/JP/KiwiMaru-Medium.ttf",
+    "ko": "font/KR/YeonSung-Regular.ttf",
+    "zh": "font/CN/NotoSerifTC-VariableFont_wght.ttf",
+    "en": "font/EN/Pacifico-Regular.ttf",
+    "ru": "font/RU/Pacifico-Regular.ttf",
+}
 
 LANGUAGE_FONT_CATEGORIES = {
     "ja": {
@@ -90,9 +98,13 @@ def _existing_path(paths: list[str]) -> str:
 
 
 def resolve_language_font_path(category: str, language_font_paths: dict | None, default_font_path: str) -> str:
-    """UI/テンプレート指定、カテゴリ別既定、共通既定の順でフォントパスを解決する。"""
+    """個別指定が空の場合、カテゴリ別既定フォントを優先して解決する。"""
     if language_font_paths and language_font_paths.get(category):
         return language_font_paths[category]
+
+    default_category_font = DEFAULT_LANGUAGE_FONT_PATHS.get(category, "")
+    if default_category_font and Path(default_category_font).exists():
+        return default_category_font
 
     category_info = LANGUAGE_FONT_CATEGORIES.get(category, LANGUAGE_FONT_CATEGORIES["en"])
     fallback = _existing_path(category_info["fallbacks"])
@@ -245,13 +257,37 @@ TEXT_ELEMENT_LABELS = {
 }
 
 
-def _text_bbox(text: str, x: int, y: int, font: ImageFont.FreeTypeFont, stroke_width: int = 0) -> tuple[int, int, int, int]:
+def _text_bbox(
+    text: str,
+    x: int,
+    y: int,
+    font: ImageFont.FreeTypeFont,
+    stroke_width: int = 0,
+) -> tuple[int, int, int, int]:
     """指定座標に描画した文字の当たり判定用矩形を返す。"""
     probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     draw = ImageDraw.Draw(probe)
     bbox = draw.textbbox((int(x), int(y)), text, font=font, stroke_width=int(stroke_width))
     padding = max(int(stroke_width), 4)
     return (bbox[0] - padding, bbox[1] - padding, bbox[2] + padding, bbox[3] + padding)
+
+
+def _text_size(text: str, font: ImageFont.FreeTypeFont, stroke_width: int = 0) -> tuple[int, int]:
+    """描画位置に依存しないテキストサイズを返す。"""
+    bbox = _text_bbox(text, 0, 0, font, stroke_width)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _centered_subtitle_x(node_text: str, subtitle_text: str, text_cfg: dict, font_path: str) -> int:
+    """Node Warを拠点名の描画幅の中央へ自動配置するX座標を返す。"""
+    node_cfg = text_cfg.get("node_name", {})
+    subtitle_cfg = text_cfg.get("subtitle", {})
+    node_font = load_font(font_path, node_cfg.get("font_size", 96))
+    subtitle_font = load_font(font_path, subtitle_cfg.get("font_size", 75))
+    node_width, _ = _text_size(node_text, node_font, node_cfg.get("stroke_width", 6))
+    subtitle_width, _ = _text_size(subtitle_text, subtitle_font, subtitle_cfg.get("stroke_width", 4))
+    node_x = node_cfg.get("x", 80)
+    return int(node_x + (node_width - subtitle_width) / 2)
 
 
 def build_text_element_bounds(
@@ -274,7 +310,13 @@ def build_text_element_bounds(
             {
                 "key": "date",
                 "label": TEXT_ELEMENT_LABELS["date"],
-                "bbox": _text_bbox(date_str, cfg.get("x", 80), cfg.get("y", 60), font, cfg.get("stroke_width", 4)),
+                "bbox": _text_bbox(
+                    date_str,
+                    cfg.get("x", 80),
+                    cfg.get("y", 60),
+                    font,
+                    cfg.get("stroke_width", 4),
+                ),
             }
         )
 
@@ -285,7 +327,13 @@ def build_text_element_bounds(
             {
                 "key": "node_name",
                 "label": TEXT_ELEMENT_LABELS["node_name"],
-                "bbox": _text_bbox(node_name, cfg.get("x", 80), cfg.get("y", 140), font, cfg.get("stroke_width", 6)),
+                "bbox": _text_bbox(
+                    node_name,
+                    cfg.get("x", 80),
+                    cfg.get("y", 140),
+                    font,
+                    cfg.get("stroke_width", 6),
+                ),
             }
         )
 
@@ -294,11 +342,22 @@ def build_text_element_bounds(
         subtitle_text = cfg.get("text", "Node War")
         if subtitle_text:
             font = load_font(font_path, cfg.get("font_size", 75))
+            subtitle_x = (
+                _centered_subtitle_x(node_name, subtitle_text, t, font_path)
+                if node_name
+                else cfg.get("x", 100)
+            )
             elements.append(
                 {
                     "key": "subtitle",
                     "label": TEXT_ELEMENT_LABELS["subtitle"],
-                    "bbox": _text_bbox(subtitle_text, cfg.get("x", 100), cfg.get("y", 470), font, cfg.get("stroke_width", 4)),
+                    "bbox": _text_bbox(
+                        subtitle_text,
+                        subtitle_x,
+                        cfg.get("y", 550),
+                        font,
+                        cfg.get("stroke_width", 4),
+                    ),
                 }
             )
 
@@ -311,9 +370,18 @@ def build_text_element_bounds(
         clean_guilds = [guild.strip() for guild in guilds[:5] if guild.strip()]
         guild_boxes = []
         for i, guild in enumerate(clean_guilds):
-            guild_font = load_font(_font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path), font_size)
+            guild_font = load_font(
+                _font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path),
+                font_size,
+            )
             guild_boxes.append(
-                _text_bbox(guild, cfg.get("x", 80), base_y + i * line_height, guild_font, cfg.get("stroke_width", 4))
+                _text_bbox(
+                    guild,
+                    cfg.get("x", 80),
+                    base_y + i * line_height,
+                    guild_font,
+                    cfg.get("stroke_width", 4),
+                )
             )
         if guild_boxes:
             elements.append(
@@ -428,12 +496,17 @@ def render_all_text(
         subtitle_text = cfg.get("text", "Node War")
         if subtitle_text:
             font = load_font(font_path, cfg.get("font_size", 75))
+            subtitle_x = (
+                _centered_subtitle_x(node_name, subtitle_text, t, font_path)
+                if node_name
+                else cfg.get("x", 100)
+            )
             if cfg.get("glow", True):
                 image = draw_text_with_glow(
                     image,
                     subtitle_text,
-                    cfg.get("x", 100),
-                    cfg.get("y", 470),
+                    subtitle_x,
+                    cfg.get("y", 550),
                     font,
                     cfg.get("color", "#E7B93E"),
                     cfg.get("stroke_color", "#000000"),
@@ -446,8 +519,8 @@ def render_all_text(
                 image = draw_text_with_stroke(
                     image,
                     subtitle_text,
-                    cfg.get("x", 100),
-                    cfg.get("y", 470),
+                    subtitle_x,
+                    cfg.get("y", 550),
                     font,
                     cfg.get("color", "#E7B93E"),
                     cfg.get("stroke_color", "#000000"),
@@ -465,7 +538,10 @@ def render_all_text(
         line_height = font_size + line_spacing
         clean_guilds = [guild.strip() for guild in guilds[:5] if guild.strip()]
         for i, guild in enumerate(clean_guilds):
-            guild_font = load_font(_font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path), font_size)
+            guild_font = load_font(
+                _font_for_guild(guild, guild_font_paths, language_font_paths, i, font_path),
+                font_size,
+            )
             image = draw_text_with_stroke(
                 image,
                 guild,

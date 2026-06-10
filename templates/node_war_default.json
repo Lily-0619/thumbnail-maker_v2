@@ -34,7 +34,7 @@
     "subtitle": {
       "text": "Node War",
       "x": 100,
-      "y": 470,
+      "y": 550,
       "font_size": 75,
       "color": "#E7B93E",
       "stroke_color": "#000000",
@@ -46,7 +46,7 @@
     },
     "guilds": {
       "x": 100,
-      "y": 300,
+      "y": 600,
       "font_size": 75,
       "line_spacing": 10,
       "color": "#F4F4F4",
@@ -87,12 +87,12 @@
     "random_dir": "assets/backgrounds"
   },
   "language_fonts": {
-    "ja": "",
-    "ru": "",
-    "en": "",
-    "zh": "",
-    "ko": ""
+    "ja": "font/JP/KiwiMaru-Medium.ttf",
+    "ru": "font/RU/Pacifico-Regular.ttf",
+    "en": "font/EN/Pacifico-Regular.ttf",
+    "zh": "font/CN/NotoSerifTC-VariableFont_wght.ttf",
+    "ko": "font/KR/YeonSung-Regular.ttf"
   },
-  "font_path": "font/JP/NotoSansJP-VariableFont_wght.ttf",
+  "font_path": "font/EN/Allura-Regular.ttf",
   "guild_font_paths": []
 }

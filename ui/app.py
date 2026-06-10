@@ -15,6 +15,8 @@ import customtkinter as ctk
 from core.composer import compose_thumbnail
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
+    DEFAULT_COMMON_FONT_PATH,
+    DEFAULT_LANGUAGE_FONT_PATHS,
     LANGUAGE_FONT_CATEGORIES,
     TEXT_ELEMENT_LABELS,
     build_text_element_bounds,
@@ -39,12 +41,20 @@ WEEKDAY_LABELS = {
 WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 WEEKDAY_BY_INDEX = WEEKDAY_ORDER
 NODE_OPTIONS_PATH = Path("data/node_options.json")
+FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
+LANGUAGE_FONT_DIRS = {
+    "ja": [Path("font/JP"), Path("font/CN")],
+    "ko": [Path("font/KR")],
+    "zh": [Path("font/CN")],
+    "en": [Path("font/EN"), Path("font/RU")],
+    "ru": [Path("font/RU")],
+}
 
 
 class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.4")
+        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.5")
         self.geometry("1500x900")
         self.resizable(True, True)
 
@@ -53,7 +63,7 @@ class ThumbnailApp(ctk.CTk):
         self.char_path = ctk.StringVar()
         # 後方エフェクトはAI生成前提。将来の生成処理からここへパスを入れる想定。
         self.effect_path = ctk.StringVar()
-        self.font_path = ctk.StringVar(value="font/JP/NotoSansJP-VariableFont_wght.ttf")
+        self.font_path = ctk.StringVar(value=DEFAULT_COMMON_FONT_PATH)
         self.branding_font_path = ctk.StringVar(value="")
         self.branding_text = ctk.StringVar(value="Black Desert Mobile")
         self.current_template_name = "node_war_default"
@@ -132,7 +142,11 @@ class ThumbnailApp(ctk.CTk):
         self.output_name = ctk.CTkEntry(parent, placeholder_text="20260609_node")
         self.output_name.pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="⚔️ ギルド名（最大5つ・空欄は無視）", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(
+            parent,
+            text="⚔️ ギルド名（最大5つ・空欄は無視）",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(anchor="w", **pad)
         self.guild_entries = []
         self.guild_font_paths = []
         for i in range(5):
@@ -141,8 +155,18 @@ class ThumbnailApp(ctk.CTk):
             entry = ctk.CTkEntry(row, placeholder_text=f"ギルド {i + 1}")
             entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
             font_var = ctk.StringVar(value="")
-            ctk.CTkEntry(row, textvariable=font_var, placeholder_text="個別フォント（任意）", width=150).pack(side="left", padx=(0, 6))
-            ctk.CTkButton(row, text="選択", width=54, command=lambda v=font_var: self._select_font_var(v)).pack(side="left")
+            ctk.CTkEntry(
+                row,
+                textvariable=font_var,
+                placeholder_text="個別フォント（任意）",
+                width=150,
+            ).pack(side="left", padx=(0, 6))
+            ctk.CTkButton(
+                row,
+                text="選択",
+                width=54,
+                command=lambda v=font_var: self._select_font_var(v),
+            ).pack(side="left")
             self.guild_entries.append(entry)
             self.guild_font_paths.append(font_var)
 
@@ -210,21 +234,38 @@ class ThumbnailApp(ctk.CTk):
             justify="left",
         ).pack(anchor="w", **pad)
         self.language_font_paths = {}
-        for key in ["ja", "ru", "en", "zh", "ko"]:
+        self.language_font_menus = {}
+        for key in ["ja", "ko", "zh", "en", "ru"]:
             row = ctk.CTkFrame(parent)
             row.pack(fill="x", **pad)
-            ctk.CTkLabel(row, text=LANGUAGE_FONT_CATEGORIES[key]["label"], width=155, anchor="w").pack(side="left", padx=(0, 6))
-            font_var = ctk.StringVar(value="")
-            ctk.CTkEntry(row, textvariable=font_var, placeholder_text="未指定ならOS標準候補", width=170).pack(side="left", fill="x", expand=True, padx=(0, 6))
-            ctk.CTkButton(row, text="選択", width=54, command=lambda v=font_var: self._select_font_var(v)).pack(side="left")
+            ctk.CTkLabel(row, text=LANGUAGE_FONT_CATEGORIES[key]["label"], width=155, anchor="w").pack(
+                side="left", padx=(0, 6)
+            )
+            font_values = self._font_options_for_language(key)
+            font_var = ctk.StringVar(value=DEFAULT_LANGUAGE_FONT_PATHS[key])
+            menu = ctk.CTkOptionMenu(row, values=font_values, variable=font_var)
+            menu.pack(side="left", fill="x", expand=True, padx=(0, 6))
             self.language_font_paths[key] = font_var
+            self.language_font_menus[key] = menu
 
         ctk.CTkLabel(parent, text="🔤 共通フォント / 右下表示", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.font_path, placeholder_text="日付・拠点名・Node War用フォント").pack(fill="x", **pad)
+        ctk.CTkEntry(
+            parent,
+            textvariable=self.font_path,
+            placeholder_text="日付・拠点名・Node War用フォント",
+        ).pack(fill="x", **pad)
         ctk.CTkButton(parent, text="共通フォントを選択", command=self._select_font).pack(fill="x", **pad)
         ctk.CTkEntry(parent, textvariable=self.branding_text, placeholder_text="右下表示テキスト").pack(fill="x", **pad)
-        ctk.CTkEntry(parent, textvariable=self.branding_font_path, placeholder_text="右下表示フォント（空なら共通フォント）").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="右下表示フォントを選択", command=lambda: self._select_font_var(self.branding_font_path)).pack(fill="x", **pad)
+        ctk.CTkEntry(
+            parent,
+            textvariable=self.branding_font_path,
+            placeholder_text="右下表示フォント（空なら共通フォント）",
+        ).pack(fill="x", **pad)
+        ctk.CTkButton(
+            parent,
+            text="右下表示フォントを選択",
+            command=lambda: self._select_font_var(self.branding_font_path),
+        ).pack(fill="x", **pad)
 
         ctk.CTkLabel(parent, text="📐 キャラ拡大率（右側固定）", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.char_scale = self._build_number_row(parent, "キャラ拡大率", "1.0")
@@ -237,10 +278,10 @@ class ThumbnailApp(ctk.CTk):
         self.node_y = self._build_number_row(parent, "拠点名Y", "300")
         self.node_size = self._build_number_row(parent, "拠点名サイズ", "170")
         self.subtitle_x = self._build_number_row(parent, "Node War X", "100")
-        self.subtitle_y = self._build_number_row(parent, "Node War Y", "470")
+        self.subtitle_y = self._build_number_row(parent, "Node War Y", "550")
         self.subtitle_size = self._build_number_row(parent, "Node Warサイズ", "75")
         self.guild_x = self._build_number_row(parent, "ギルド名X", "100")
-        self.guild_y = self._build_number_row(parent, "ギルド名Y", "300")
+        self.guild_y = self._build_number_row(parent, "ギルド名Y", "600")
         self.guild_size = self._build_number_row(parent, "ギルド名サイズ", "75")
         self.guild_line_spacing = self._build_number_row(parent, "ギルド名行間", "10")
         self.branding_x = self._build_number_row(parent, "右下表示X", "1320")
@@ -263,6 +304,44 @@ class ThumbnailApp(ctk.CTk):
         else:
             self.options_frame.pack_forget()
 
+    def _relative_project_path(self, value: str | Path) -> str:
+        """プロジェクトルート配下のパスは相対パスに変換する。"""
+        try:
+            path = Path(value).resolve()
+            return path.relative_to(Path.cwd().resolve()).as_posix()
+        except (OSError, ValueError):
+            return str(value)
+
+    def _font_options_for_language(self, key: str) -> list[str]:
+        """言語カテゴリに対応するフォントをプルダウン用に収集する。"""
+        values = []
+        seen = set()
+        for font_dir in LANGUAGE_FONT_DIRS[key]:
+            if not font_dir.exists():
+                continue
+            for path in sorted(font_dir.iterdir(), key=lambda item: item.name.lower()):
+                if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
+                    continue
+                rel_path = path.as_posix()
+                if rel_path not in seen:
+                    values.append(rel_path)
+                    seen.add(rel_path)
+
+        default_path = DEFAULT_LANGUAGE_FONT_PATHS[key]
+        if default_path not in seen:
+            values.insert(0, default_path)
+        return values or [default_path]
+
+    def _set_font_menu_value(self, key: str, value: str):
+        """テンプレート値が候補外でも現在値として選べるようにする。"""
+        value = value or DEFAULT_LANGUAGE_FONT_PATHS[key]
+        menu = self.language_font_menus[key]
+        current_values = list(menu.cget("values"))
+        if value not in current_values:
+            current_values.append(value)
+            menu.configure(values=current_values)
+        self.language_font_paths[key].set(value)
+
     # ──────────────────────────────────────────
     #  ファイル選択
     # ──────────────────────────────────────────
@@ -276,9 +355,13 @@ class ThumbnailApp(ctk.CTk):
             self.bg_path.set(p)
 
     def _select_char(self):
-        p = filedialog.askopenfilename(title="キャラクター画像を選択", filetypes=[("PNG画像", "*.png"), ("すべて", "*.*")])
+        p = filedialog.askopenfilename(
+            title="キャラクター画像を選択",
+            initialdir=Path("material/character"),
+            filetypes=[("PNG画像", "*.png"), ("すべて", "*.*")],
+        )
         if p:
-            self.char_path.set(p)
+            self.char_path.set(self._relative_project_path(p))
 
     def _select_font(self):
         self._select_font_var(self.font_path)
@@ -386,7 +469,7 @@ class ThumbnailApp(ctk.CTk):
         print(f"[テンプレート保存] {self.current_template_name}")
 
     def _apply_template_to_controls(self):
-        self.font_path.set(self.current_template.get("font_path", self.font_path.get()))
+        self.font_path.set(self.current_template.get("font_path", DEFAULT_COMMON_FONT_PATH))
         self._set_entry(self.char_scale, self.current_template.get("character", {}).get("scale", 1.0))
 
         text_cfg = self.current_template.get("text", {})
@@ -397,10 +480,10 @@ class ThumbnailApp(ctk.CTk):
         self._set_entry(self.node_y, text_cfg.get("node_name", {}).get("y", 300))
         self._set_entry(self.node_size, text_cfg.get("node_name", {}).get("font_size", 170))
         self._set_entry(self.subtitle_x, text_cfg.get("subtitle", {}).get("x", 100))
-        self._set_entry(self.subtitle_y, text_cfg.get("subtitle", {}).get("y", 470))
+        self._set_entry(self.subtitle_y, text_cfg.get("subtitle", {}).get("y", 550))
         self._set_entry(self.subtitle_size, text_cfg.get("subtitle", {}).get("font_size", 75))
         self._set_entry(self.guild_x, text_cfg.get("guilds", {}).get("x", 100))
-        self._set_entry(self.guild_y, text_cfg.get("guilds", {}).get("y", 300))
+        self._set_entry(self.guild_y, text_cfg.get("guilds", {}).get("y", 600))
         self._set_entry(self.guild_size, text_cfg.get("guilds", {}).get("font_size", 75))
         self._set_entry(self.guild_line_spacing, text_cfg.get("guilds", {}).get("line_spacing", 10))
 
@@ -412,8 +495,8 @@ class ThumbnailApp(ctk.CTk):
         self._set_entry(self.branding_size, branding_cfg.get("font_size", 46))
 
         language_fonts = self.current_template.get("language_fonts", {})
-        for key, font_var in self.language_font_paths.items():
-            font_var.set(language_fonts.get(key, ""))
+        for key in self.language_font_paths:
+            self._set_font_menu_value(key, language_fonts.get(key, DEFAULT_LANGUAGE_FONT_PATHS[key]))
 
         guild_font_paths = self.current_template.get("guild_font_paths", [])
         for index, font_var in enumerate(self.guild_font_paths):
@@ -536,14 +619,14 @@ class ThumbnailApp(ctk.CTk):
             {
                 "text": "Node War",
                 "x": self._int_value(self.subtitle_x, 100),
-                "y": self._int_value(self.subtitle_y, 470),
+                "y": self._int_value(self.subtitle_y, 550),
                 "font_size": self._int_value(self.subtitle_size, 75),
             }
         )
         text_cfg.setdefault("guilds", {}).update(
             {
                 "x": self._int_value(self.guild_x, 100),
-                "y": self._int_value(self.guild_y, 300),
+                "y": self._int_value(self.guild_y, 600),
                 "font_size": self._int_value(self.guild_size, 75),
                 "line_spacing": self._int_value(self.guild_line_spacing, 10),
             }
@@ -578,7 +661,7 @@ class ThumbnailApp(ctk.CTk):
             for key, var in self.language_font_paths.items()
             if var.get().strip()
         }
-        template["font_path"] = self.font_path.get().strip()
+        template["font_path"] = self.font_path.get().strip() or DEFAULT_COMMON_FONT_PATH
         template["guild_font_paths"] = guild_font_paths
         template["language_fonts"] = language_font_paths
 
@@ -590,7 +673,7 @@ class ThumbnailApp(ctk.CTk):
             "node_name": self.node_entry.get(),
             "guilds": guilds,
             "template": template,
-            "font_path": self.font_path.get(),
+            "font_path": self.font_path.get().strip() or DEFAULT_COMMON_FONT_PATH,
             "guild_font_paths": guild_font_paths,
             "language_font_paths": language_font_paths,
         }

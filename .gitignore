@@ -102,3 +102,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# thumbnail-maker local/runtime assets
+font/
+material/
+outputs/
+.venv/
+**/__pycache__/
