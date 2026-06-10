@@ -40,6 +40,8 @@ def get_default_template() -> dict:
     """デフォルトテンプレートをdictで返す。"""
     return {
         "template_name": "default",
+        "font_path": "font/JP/NotoSansJP-VariableFont_wght.ttf",
+        "guild_font_paths": [],
         "canvas": {"width": 1920, "height": 1080},
         "text": {
             "shadow": {"color": "#06101F", "offset": [4, 4], "blur": 3},
