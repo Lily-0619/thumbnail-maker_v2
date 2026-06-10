@@ -40,7 +40,7 @@ def get_default_template() -> dict:
     """デフォルトテンプレートをdictで返す。"""
     return {
         "template_name": "default",
-        "font_path": "font/JP/NotoSansJP-VariableFont_wght.ttf",
+        "font_path": "font/EN/Allura-Regular.ttf",
         "guild_font_paths": [],
         "canvas": {"width": 1920, "height": 1080},
         "text": {
@@ -69,7 +69,7 @@ def get_default_template() -> dict:
             "subtitle": {
                 "text": "Node War",
                 "x": 100,
-                "y": 470,
+                "y": 550,
                 "font_size": 75,
                 "color": "#E7B93E",
                 "stroke_color": "#000000",
@@ -81,7 +81,7 @@ def get_default_template() -> dict:
             },
             "guilds": {
                 "x": 100,
-                "y": 300,
+                "y": 600,
                 "font_size": 75,
                 "line_spacing": 10,
                 "color": "#F4F4F4",
@@ -115,11 +115,11 @@ def get_default_template() -> dict:
             "logo_path": "",
         },
         "language_fonts": {
-            "ja": "",
-            "ru": "",
-            "en": "",
-            "zh": "",
-            "ko": "",
+            "ja": "font/JP/KiwiMaru-Medium.ttf",
+            "ru": "font/RU/Pacifico-Regular.ttf",
+            "en": "font/EN/Pacifico-Regular.ttf",
+            "zh": "font/CN/NotoSerifTC-VariableFont_wght.ttf",
+            "ko": "font/KR/YeonSung-Regular.ttf",
         },
         "background": {
             "type": "dark_castle",
