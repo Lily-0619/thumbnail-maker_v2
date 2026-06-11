@@ -70,6 +70,7 @@ class ThumbnailApp(ctk.CTk):
         self.current_template = load_template(self.current_template_name)
         self.node_options = self._load_node_options()
         self._preview_image = None  # PIL Image キャッシュ
+        self._preview_text_elements = []  # ドラッグ追従用に保持
         self.selected_text_key = None
         self.selected_text_name = ctk.StringVar(value="選択中: なし")
         self.options_visible = False
@@ -99,7 +100,11 @@ class ThumbnailApp(ctk.CTk):
         right.rowconfigure(2, weight=1)
         self.preview = PreviewPanel(right, height=430)
         self.preview.grid(row=0, column=0, padx=10, pady=10, sticky="new")
-        self.preview.set_callbacks(on_select=self._select_text_element, on_drag=self._drag_text_element)
+        self.preview.set_callbacks(
+            on_select=self._select_text_element,
+            on_drag=self._drag_text_element,
+            on_release=self._refresh_preview_after_text_edit,
+        )
         ctk.CTkLabel(right, textvariable=self.selected_text_name, font=ctk.CTkFont(size=14, weight="bold")).grid(
             row=1, column=0, sticky="n", pady=(0, 4)
         )
@@ -522,7 +527,6 @@ class ThumbnailApp(ctk.CTk):
         entry.delete(0, "end")
         entry.insert(0, str(value))
 
-
     def _text_control_map(self) -> dict:
         return {
             "date": {"x": self.date_x, "y": self.date_y, "size": self.date_size},
@@ -560,12 +564,22 @@ class ThumbnailApp(ctk.CTk):
         self._refresh_preview_after_text_edit()
 
     def _drag_text_element(self, key: str, dx: int, dy: int):
-        """プレビュー上のドラッグ量を元画像座標として反映する。"""
+        """ドラッグ中は座標値のみ更新し、Canvasの選択枠だけ動かす。
+        再合成はマウスを離したとき（on_release）にまとめて行う。"""
         self._select_text_element(key)
-        self._move_text_element(key, dx, dy)
+        self._move_text_element(key, dx, dy, refresh=False)
+        # bboxをその場で動かして選択枠をリアルタイム追従させる
+        for element in self._preview_text_elements:
+            if element["key"] == key:
+                x1, y1, x2, y2 = element["bbox"]
+                element["bbox"] = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+                break
+        self.preview.set_text_elements(self._preview_text_elements)
+        self.preview.set_selected(key)
 
     def _on_key_press(self, event):
-        """選択中の文字要素を矢印キーで移動し、Ctrl+上下でサイズを変える。"""
+        """選択中の文字要素を矢印キーで移動し、Ctrl+上下でサイズを変える。
+        キー操作は 120ms デバウンスして再合成の頻度を抑える。"""
         if not self.selected_text_key:
             return
         key_name = event.keysym
@@ -589,7 +603,21 @@ class ThumbnailApp(ctk.CTk):
             dx = -step
         elif key_name == "Right":
             dx = step
-        self._move_text_element(self.selected_text_key, dx, dy)
+
+        # 座標・枠だけ即時更新し、再合成は120ms後にまとめて実行
+        self._move_text_element(self.selected_text_key, dx, dy, refresh=False)
+        for element in self._preview_text_elements:
+            if element["key"] == self.selected_text_key:
+                x1, y1, x2, y2 = element["bbox"]
+                element["bbox"] = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+                break
+        self.preview.set_text_elements(self._preview_text_elements)
+        self.preview.set_selected(self.selected_text_key)
+
+        if hasattr(self, "_key_debounce_id"):
+            self.after_cancel(self._key_debounce_id)
+        self._key_debounce_id = self.after(120, self._refresh_preview_after_text_edit)
+
         return "break"
 
     def _refresh_preview_after_text_edit(self):
@@ -688,17 +716,17 @@ class ThumbnailApp(ctk.CTk):
             img = compose_thumbnail(**params)
             self._preview_image = img
             self.preview.show(img)
-            self.preview.set_text_elements(
-                build_text_element_bounds(
-                    params["date_str"],
-                    params["node_name"],
-                    params["guilds"],
-                    params["template"],
-                    params["font_path"],
-                    guild_font_paths=params["guild_font_paths"],
-                    language_font_paths=params["language_font_paths"],
-                )
+            elements = build_text_element_bounds(
+                params["date_str"],
+                params["node_name"],
+                params["guilds"],
+                params["template"],
+                params["font_path"],
+                guild_font_paths=params["guild_font_paths"],
+                language_font_paths=params["language_font_paths"],
             )
+            self._preview_text_elements = elements  # ドラッグ追従用にキャッシュ
+            self.preview.set_text_elements(elements)
             self.preview.set_selected(self.selected_text_key)
         except Exception as e:
             messagebox.showerror("エラー", f"プレビュー生成に失敗しました:\n{e}")
