@@ -24,8 +24,10 @@ class PreviewPanel(ctk.CTkFrame):
         self._selected_key = None
         self._select_callback = None
         self._drag_callback = None
+        self._release_callback = None  # ドラッグ完了時に再合成を呼ぶ
         self._drag_key = None
         self._drag_last = None
+        self._drag_occurred = False  # ドラッグが実際に発生したか記録
 
         self._canvas.create_text(
             10,
@@ -41,10 +43,11 @@ class PreviewPanel(ctk.CTkFrame):
         self._canvas.bind("<B1-Motion>", self._on_drag)
         self._canvas.bind("<ButtonRelease-1>", self._on_release)
 
-    def set_callbacks(self, on_select=None, on_drag=None):
-        """クリック選択とドラッグ移動のコールバックを登録する。"""
+    def set_callbacks(self, on_select=None, on_drag=None, on_release=None):
+        """クリック選択・ドラッグ移動・ドラッグ完了のコールバックを登録する。"""
         self._select_callback = on_select
         self._drag_callback = on_drag
+        self._release_callback = on_release
 
     def set_text_elements(self, elements):
         """1920x1080基準の文字要素矩形をプレビューへ渡す。"""
@@ -122,6 +125,7 @@ class PreviewPanel(ctk.CTkFrame):
         key = self._hit_test(*image_pos) if image_pos else None
         self._drag_key = key
         self._drag_last = (event.x, event.y) if key else None
+        self._drag_occurred = False
         self.set_selected(key)
         if self._select_callback:
             self._select_callback(key)
@@ -134,12 +138,17 @@ class PreviewPanel(ctk.CTkFrame):
         dy = event.y - self._drag_last[1]
         image_dx, image_dy = self._image_delta_from_canvas(dx, dy)
         if image_dx or image_dy:
+            self._drag_occurred = True
             self._drag_callback(self._drag_key, image_dx, image_dy)
             self._drag_last = (event.x, event.y)
 
     def _on_release(self, _event):
+        """マウスを離したとき、ドラッグが発生していれば再合成コールバックを呼ぶ。"""
+        if self._drag_occurred and self._release_callback:
+            self._release_callback()
         self._drag_key = None
         self._drag_last = None
+        self._drag_occurred = False
 
     def _draw_selection(self):
         self._canvas.delete("selection")
