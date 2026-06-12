@@ -1,6 +1,6 @@
 """
 app.py
-customtkinter を使ったメインUIウィンドウ。
+customtkinter main UI window.
 """
 
 import copy
@@ -11,6 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+from PIL import Image
 
 from core.composer import compose_thumbnail
 from core.template import list_templates, load_template, save_template
@@ -24,19 +25,23 @@ from core.text_renderer import (
 from ui.preview import PreviewPanel
 
 
-# ── テーマ設定 ──
+# ── Theme ──
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+_THEME_PATH = Path("config/pink_theme.json")
+if _THEME_PATH.exists():
+    ctk.set_default_color_theme(str(_THEME_PATH))
+else:
+    ctk.set_default_color_theme("blue")
 
 
 WEEKDAY_LABELS = {
-    "monday": "月曜日",
-    "tuesday": "火曜日",
-    "wednesday": "水曜日",
-    "thursday": "木曜日",
-    "friday": "金曜日",
-    "saturday": "土曜日",
-    "sunday": "日曜日",
+    "monday": "Monday",
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday": "Thursday",
+    "friday": "Friday",
+    "saturday": "Saturday",
+    "sunday": "Sunday",
 }
 WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 WEEKDAY_BY_INDEX = WEEKDAY_ORDER
@@ -51,17 +56,81 @@ LANGUAGE_FONT_DIRS = {
 }
 
 
+class CharacterPickerDialog(ctk.CTkToplevel):
+    """Grid thumbnail picker for character images."""
+
+    CHAR_DIR = Path("material/character")
+    THUMB_SIZE = (96, 96)
+    COLS = 4
+
+    def __init__(self, parent, on_select):
+        super().__init__(parent)
+        self.title("Pick Character")
+        self.geometry("520x560")
+        self.resizable(True, True)
+        self.grab_set()
+        self._on_select = on_select
+        self._thumb_refs = []
+
+        self._build()
+
+    def _build(self):
+        images = sorted(self.CHAR_DIR.glob("*.png")) if self.CHAR_DIR.exists() else []
+
+        if not images:
+            ctk.CTkLabel(self, text="No images found in material/character/").pack(pady=20)
+            return
+
+        scroll = ctk.CTkScrollableFrame(self, label_text="Character Images")
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+
+        for idx, path in enumerate(images):
+            row_idx = idx // self.COLS
+            col_idx = idx % self.COLS
+            self._add_thumb(scroll, path, row_idx, col_idx)
+
+    def _add_thumb(self, parent, path, row_idx, col_idx):
+        try:
+            img = Image.open(path).convert("RGBA")
+            img.thumbnail(self.THUMB_SIZE, Image.LANCZOS)
+            thumb = Image.new("RGBA", self.THUMB_SIZE, (0, 0, 0, 0))
+            offset = (
+                (self.THUMB_SIZE[0] - img.width) // 2,
+                (self.THUMB_SIZE[1] - img.height) // 2,
+            )
+            thumb.paste(img, offset)
+
+            ctk_img = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=self.THUMB_SIZE)
+            self._thumb_refs.append(ctk_img)
+
+            name = path.stem.replace("m_img_", "").replace("_", " ")
+            btn = ctk.CTkButton(
+                parent,
+                image=ctk_img,
+                text=name[:14],
+                compound="top",
+                width=116,
+                height=128,
+                command=lambda p=path: self._pick(p),
+            )
+            btn.grid(row=row_idx, column=col_idx, padx=4, pady=4)
+        except Exception:
+            pass
+
+    def _pick(self, path):
+        self._on_select(str(path))
+        self.destroy()
+
+
 class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("黒砂漠モバイル サムネイル自動生成アプリ v0.2.5")
+        self.title("BDM Thumbnail Generator v0.2.5")
         self.geometry("1500x900")
         self.resizable(True, True)
 
-        # ── 内部状態 ──
         self.bg_path = ctk.StringVar()
         self.char_path = ctk.StringVar()
-        # 後方エフェクトはAI生成前提。将来の生成処理からここへパスを入れる想定。
         self.effect_path = ctk.StringVar()
         self.font_path = ctk.StringVar(value=DEFAULT_COMMON_FONT_PATH)
         self.branding_font_path = ctk.StringVar(value="")
@@ -69,10 +138,10 @@ class ThumbnailApp(ctk.CTk):
         self.current_template_name = "node_war_default"
         self.current_template = load_template(self.current_template_name)
         self.node_options = self._load_node_options()
-        self._preview_image = None  # PIL Image キャッシュ
-        self._preview_text_elements = []  # ドラッグ追従用に保持
+        self._preview_image = None
+        self._preview_text_elements = []
         self.selected_text_key = None
-        self.selected_text_name = ctk.StringVar(value="選択中: なし")
+        self.selected_text_name = ctk.StringVar(value="Selected: none")
         self.options_visible = False
 
         self._build_layout()
@@ -80,7 +149,7 @@ class ThumbnailApp(ctk.CTk):
         self._update_output_name()
 
     # ──────────────────────────────────────────
-    #  レイアウト構築
+    #  Layout
     # ──────────────────────────────────────────
 
     def _build_layout(self):
@@ -88,7 +157,7 @@ class ThumbnailApp(ctk.CTk):
         self.columnconfigure(1, weight=2)
         self.rowconfigure(0, weight=1)
 
-        left = ctk.CTkScrollableFrame(self, width=500, label_text="設定パネル")
+        left = ctk.CTkScrollableFrame(self, width=500, label_text="Settings")
         left.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self._build_form(left)
 
@@ -110,7 +179,7 @@ class ThumbnailApp(ctk.CTk):
         )
         ctk.CTkLabel(
             right,
-            text="プレビュー上の文字をクリックして選択 → 矢印キーで移動 / Shift+矢印で10px移動 / Ctrl+上下でサイズ変更 / ドラッグで移動",
+            text="Click text in preview to select → Arrow keys to move / Shift+Arrow for 10px / Ctrl+Up/Down to resize / Drag to move",
             text_color="gray",
             wraplength=780,
             justify="center",
@@ -120,12 +189,12 @@ class ThumbnailApp(ctk.CTk):
     def _build_form(self, parent):
         pad = {"padx": 10, "pady": 4}
 
-        ctk.CTkLabel(parent, text="📅 日付", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="📅 Date", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.date_entry = ctk.CTkEntry(parent, placeholder_text="2026.06.04")
         self.date_entry.insert(0, date.today().strftime("%Y.%m.%d"))
         self.date_entry.pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="🗓️ 曜日", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="🗓️ Day", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         current_weekday = WEEKDAY_BY_INDEX[date.today().weekday()]
         self.weekday_menu = ctk.CTkOptionMenu(
             parent,
@@ -135,21 +204,20 @@ class ThumbnailApp(ctk.CTk):
         self.weekday_menu.set(WEEKDAY_LABELS[current_weekday])
         self.weekday_menu.pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="🏰 拠点候補", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.node_entry = ctk.CTkEntry(parent, placeholder_text="リンチファーム遺跡")
-        self.node_menu = ctk.CTkOptionMenu(parent, values=["未設定"], command=self._on_node_selected)
+        ctk.CTkLabel(parent, text="🏰 Node", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.node_entry = ctk.CTkEntry(parent, placeholder_text="Node name")
+        self.node_menu = ctk.CTkOptionMenu(parent, values=["N/A"], command=self._on_node_selected)
         self.node_menu.pack(fill="x", **pad)
         self.node_entry.pack(fill="x", **pad)
         self._set_node_menu_values(current_weekday)
 
-        # 出力ファイル名は、日付・拠点候補の下、ギルド名入力の上へ移動。
-        ctk.CTkLabel(parent, text="💾 出力ファイル名", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="💾 Output Filename", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.output_name = ctk.CTkEntry(parent, placeholder_text="20260609_node")
         self.output_name.pack(fill="x", **pad)
 
         ctk.CTkLabel(
             parent,
-            text="⚔️ ギルド名（最大5つ・空欄は無視）",
+            text="⚔️ Guild Names (up to 5)",
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(anchor="w", **pad)
         self.guild_entries = []
@@ -157,44 +225,35 @@ class ThumbnailApp(ctk.CTk):
         for i in range(5):
             row = ctk.CTkFrame(parent)
             row.pack(fill="x", **pad)
-            entry = ctk.CTkEntry(row, placeholder_text=f"ギルド {i + 1}")
+            entry = ctk.CTkEntry(row, placeholder_text=f"Guild {i + 1}")
             entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
             font_var = ctk.StringVar(value="")
             ctk.CTkEntry(
                 row,
                 textvariable=font_var,
-                placeholder_text="個別フォント（任意）",
+                placeholder_text="Font (optional)",
                 width=150,
             ).pack(side="left", padx=(0, 6))
             ctk.CTkButton(
                 row,
-                text="選択",
-                width=54,
+                text="Select",
+                width=60,
                 command=lambda v=font_var: self._select_font_var(v),
             ).pack(side="left")
             self.guild_entries.append(entry)
             self.guild_font_paths.append(font_var)
 
-        ctk.CTkLabel(parent, text="🖼️ 背景画像", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="未選択なら所定フォルダからランダム").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="背景を選択", command=self._select_bg).pack(fill="x", **pad)
+        ctk.CTkLabel(parent, text="🖼️ Background", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="Leave blank for random from folder").pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="Select Background", command=self._select_bg).pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="🧙 キャラクター画像", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.char_path, placeholder_text="未選択").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="キャラを選択", command=self._select_char).pack(fill="x", **pad)
-
-        ctk.CTkLabel(parent, text="✨ 後方エフェクト", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkLabel(
-            parent,
-            text="後方エフェクトは今後、背景生成開始時にキャラクターへ合わせてAI生成する想定です。位置・サイズ・透明度の手動調整はv0.2.2で削除しました。",
-            text_color="gray",
-            wraplength=430,
-            justify="left",
-        ).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="🧙 Character", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(parent, textvariable=self.char_path, placeholder_text="None selected").pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="Pick Character", command=self._select_char).pack(fill="x", **pad)
 
         ctk.CTkButton(
             parent,
-            text="⚙️ オプションを開く",
+            text="⚙️ Options",
             height=38,
             command=self._toggle_options,
         ).pack(fill="x", padx=10, pady=(12, 4))
@@ -202,16 +261,16 @@ class ThumbnailApp(ctk.CTk):
         self.options_frame = ctk.CTkFrame(parent)
         self._build_options(self.options_frame)
 
-        ctk.CTkLabel(parent, text="📋 テンプレート", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="📋 Template", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         templates = list_templates() or ["node_war_default"]
         self.template_menu = ctk.CTkOptionMenu(parent, values=templates, command=self._load_template)
         self.template_menu.set(self.current_template_name if self.current_template_name in templates else templates[0])
         self.template_menu.pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="💾 現在設定をテンプレ保存", command=self._save_current_template).pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="💾 Save as Template", command=self._save_current_template).pack(fill="x", **pad)
 
         ctk.CTkButton(
             parent,
-            text="👁️  プレビュー",
+            text="👁️  Preview",
             height=44,
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._preview,
@@ -219,21 +278,21 @@ class ThumbnailApp(ctk.CTk):
 
         ctk.CTkButton(
             parent,
-            text="📤  PNG出力",
+            text="📤  Export PNG",
             height=44,
             font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#1e6f3e",
-            hover_color="#145a2e",
+            fg_color="#7b1fa2",
+            hover_color="#6a1590",
             command=self._export,
         ).pack(fill="x", padx=10, pady=4)
 
     def _build_options(self, parent):
         pad = {"padx": 10, "pady": 4}
 
-        ctk.CTkLabel(parent, text="🌐 ギルド名カテゴリ別フォント", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="🌐 Guild Font by Language", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkLabel(
             parent,
-            text="個別フォント欄が空なら、ギルド名から言語カテゴリを自動判定して下のフォントを使います。",
+            text="If per-guild font is empty, language is auto-detected from the guild name.",
             text_color="gray",
             wraplength=430,
             justify="left",
@@ -253,45 +312,45 @@ class ThumbnailApp(ctk.CTk):
             self.language_font_paths[key] = font_var
             self.language_font_menus[key] = menu
 
-        ctk.CTkLabel(parent, text="🔤 共通フォント / 右下表示", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="🔤 Common Font / Branding", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkEntry(
             parent,
             textvariable=self.font_path,
-            placeholder_text="日付・拠点名・Node War用フォント",
+            placeholder_text="Font for date, node name, Node War",
         ).pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="共通フォントを選択", command=self._select_font).pack(fill="x", **pad)
-        ctk.CTkEntry(parent, textvariable=self.branding_text, placeholder_text="右下表示テキスト").pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="Select Common Font", command=self._select_font).pack(fill="x", **pad)
+        ctk.CTkEntry(parent, textvariable=self.branding_text, placeholder_text="Branding text").pack(fill="x", **pad)
         ctk.CTkEntry(
             parent,
             textvariable=self.branding_font_path,
-            placeholder_text="右下表示フォント（空なら共通フォント）",
+            placeholder_text="Branding font (blank = common font)",
         ).pack(fill="x", **pad)
         ctk.CTkButton(
             parent,
-            text="右下表示フォントを選択",
+            text="Select Branding Font",
             command=lambda: self._select_font_var(self.branding_font_path),
         ).pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="📐 キャラ拡大率（右側固定）", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.char_scale = self._build_number_row(parent, "キャラ拡大率", "1.0")
+        ctk.CTkLabel(parent, text="📐 Character Scale", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.char_scale = self._build_number_row(parent, "Scale", "1.0")
 
-        ctk.CTkLabel(parent, text="📝 文字位置・サイズ", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.date_x = self._build_number_row(parent, "日付X", "100")
-        self.date_y = self._build_number_row(parent, "日付Y", "60")
-        self.date_size = self._build_number_row(parent, "日付サイズ", "70")
-        self.node_x = self._build_number_row(parent, "拠点名X", "100")
-        self.node_y = self._build_number_row(parent, "拠点名Y", "300")
-        self.node_size = self._build_number_row(parent, "拠点名サイズ", "170")
+        ctk.CTkLabel(parent, text="📝 Text Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.date_x = self._build_number_row(parent, "Date X", "100")
+        self.date_y = self._build_number_row(parent, "Date Y", "60")
+        self.date_size = self._build_number_row(parent, "Date Size", "70")
+        self.node_x = self._build_number_row(parent, "Node X", "100")
+        self.node_y = self._build_number_row(parent, "Node Y", "300")
+        self.node_size = self._build_number_row(parent, "Node Size", "170")
         self.subtitle_x = self._build_number_row(parent, "Node War X", "100")
         self.subtitle_y = self._build_number_row(parent, "Node War Y", "550")
-        self.subtitle_size = self._build_number_row(parent, "Node Warサイズ", "75")
-        self.guild_x = self._build_number_row(parent, "ギルド名X", "100")
-        self.guild_y = self._build_number_row(parent, "ギルド名Y", "600")
-        self.guild_size = self._build_number_row(parent, "ギルド名サイズ", "75")
-        self.guild_line_spacing = self._build_number_row(parent, "ギルド名行間", "10")
-        self.branding_x = self._build_number_row(parent, "右下表示X", "1320")
-        self.branding_y = self._build_number_row(parent, "右下表示Y", "980")
-        self.branding_size = self._build_number_row(parent, "右下表示サイズ", "46")
+        self.subtitle_size = self._build_number_row(parent, "Node War Size", "75")
+        self.guild_x = self._build_number_row(parent, "Guild X", "100")
+        self.guild_y = self._build_number_row(parent, "Guild Y", "600")
+        self.guild_size = self._build_number_row(parent, "Guild Size", "75")
+        self.guild_line_spacing = self._build_number_row(parent, "Guild Spacing", "10")
+        self.branding_x = self._build_number_row(parent, "Branding X", "1320")
+        self.branding_y = self._build_number_row(parent, "Branding Y", "980")
+        self.branding_size = self._build_number_row(parent, "Branding Size", "46")
 
     def _build_number_row(self, parent, label: str, default: str) -> ctk.CTkEntry:
         row = ctk.CTkFrame(parent)
@@ -310,7 +369,6 @@ class ThumbnailApp(ctk.CTk):
             self.options_frame.pack_forget()
 
     def _relative_project_path(self, value: str | Path) -> str:
-        """プロジェクトルート配下のパスは相対パスに変換する。"""
         try:
             path = Path(value).resolve()
             return path.relative_to(Path.cwd().resolve()).as_posix()
@@ -318,7 +376,6 @@ class ThumbnailApp(ctk.CTk):
             return str(value)
 
     def _font_options_for_language(self, key: str) -> list[str]:
-        """言語カテゴリに対応するフォントをプルダウン用に収集する。"""
         values = []
         seen = set()
         for font_dir in LANGUAGE_FONT_DIRS[key]:
@@ -338,7 +395,6 @@ class ThumbnailApp(ctk.CTk):
         return values or [default_path]
 
     def _set_font_menu_value(self, key: str, value: str):
-        """テンプレート値が候補外でも現在値として選べるようにする。"""
         value = value or DEFAULT_LANGUAGE_FONT_PATHS[key]
         menu = self.language_font_menus[key]
         current_values = list(menu.cget("values"))
@@ -348,39 +404,36 @@ class ThumbnailApp(ctk.CTk):
         self.language_font_paths[key].set(value)
 
     # ──────────────────────────────────────────
-    #  ファイル選択
+    #  File selection
     # ──────────────────────────────────────────
 
     def _select_bg(self):
         p = filedialog.askopenfilename(
-            title="背景画像を選択",
-            filetypes=[("画像ファイル", "*.png *.jpg *.jpeg *.webp"), ("すべて", "*.*")],
+            title="Select Background Image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")],
         )
         if p:
             self.bg_path.set(p)
 
     def _select_char(self):
-        p = filedialog.askopenfilename(
-            title="キャラクター画像を選択",
-            initialdir=Path("material/character"),
-            filetypes=[("PNG画像", "*.png"), ("すべて", "*.*")],
+        CharacterPickerDialog(
+            self,
+            on_select=lambda p: self.char_path.set(self._relative_project_path(p)),
         )
-        if p:
-            self.char_path.set(self._relative_project_path(p))
 
     def _select_font(self):
         self._select_font_var(self.font_path)
 
     def _select_font_var(self, font_var):
         p = filedialog.askopenfilename(
-            title="フォントファイルを選択",
-            filetypes=[("フォント", "*.ttf *.otf *.ttc"), ("すべて", "*.*")],
+            title="Select Font File",
+            filetypes=[("Font files", "*.ttf *.otf *.ttc"), ("All files", "*.*")],
         )
         if p:
             font_var.set(p)
 
     # ──────────────────────────────────────────
-    #  曜日別拠点候補 / 出力名
+    #  Node options / output name
     # ──────────────────────────────────────────
 
     def _load_node_options(self) -> dict:
@@ -396,10 +449,10 @@ class ThumbnailApp(ctk.CTk):
         return "monday"
 
     def _set_node_menu_values(self, weekday_key: str):
-        values = self.node_options.get(weekday_key) or ["未設定"]
+        values = self.node_options.get(weekday_key) or ["N/A"]
         self.node_menu.configure(values=values)
         self.node_menu.set(values[0])
-        if values[0] != "未設定":
+        if values[0] != "N/A":
             self.node_entry.delete(0, "end")
             self.node_entry.insert(0, values[0])
 
@@ -408,7 +461,7 @@ class ThumbnailApp(ctk.CTk):
         self._update_output_name()
 
     def _on_node_selected(self, node_name: str):
-        if node_name == "未設定":
+        if node_name == "N/A":
             return
         self.node_entry.delete(0, "end")
         self.node_entry.insert(0, node_name)
@@ -430,17 +483,16 @@ class ThumbnailApp(ctk.CTk):
         self.output_name.insert(0, f"{date_part}_{node_part}")
 
     # ──────────────────────────────────────────
-    #  テンプレート読み込み
+    #  Template
     # ──────────────────────────────────────────
 
     def _load_template(self, name: str):
         self.current_template_name = name
         self.current_template = load_template(name)
         self._apply_template_to_controls()
-        print(f"[テンプレート] {name} を読み込みました")
+        print(f"[Template] loaded: {name}")
 
     def _path_for_template(self, value: str) -> str:
-        """テンプレートへ保存するパス。アプリ内ファイルは相対パスにしてWindows/Mac間で使いやすくする。"""
         value = value.strip()
         if not value:
             return ""
@@ -453,7 +505,6 @@ class ThumbnailApp(ctk.CTk):
         return value
 
     def _save_current_template(self):
-        """現在の文字位置・サイズ・フォント設定を選択中テンプレートへ保存する。"""
         params = self._collect_params()
         template = params["template"]
         template["template_name"] = self.current_template_name
@@ -470,8 +521,8 @@ class ThumbnailApp(ctk.CTk):
 
         save_template(self.current_template_name, template)
         self.current_template = copy.deepcopy(template)
-        messagebox.showinfo("テンプレート保存", f"{self.current_template_name} に現在設定を保存しました。")
-        print(f"[テンプレート保存] {self.current_template_name}")
+        messagebox.showinfo("Template Saved", f"Saved to: {self.current_template_name}")
+        print(f"[Template] saved: {self.current_template_name}")
 
     def _apply_template_to_controls(self):
         self.font_path.set(self.current_template.get("font_path", DEFAULT_COMMON_FONT_PATH))
@@ -508,7 +559,7 @@ class ThumbnailApp(ctk.CTk):
             font_var.set(guild_font_paths[index] if index < len(guild_font_paths) else "")
 
     # ──────────────────────────────────────────
-    #  合成パラメータ収集
+    #  Params
     # ──────────────────────────────────────────
 
     def _int_value(self, entry, default: int) -> int:
@@ -537,12 +588,11 @@ class ThumbnailApp(ctk.CTk):
         }
 
     def _select_text_element(self, key: str | None):
-        """プレビューでクリックされた文字要素を選択状態にする。"""
         self.selected_text_key = key
         if key:
-            self.selected_text_name.set(f"選択中: {TEXT_ELEMENT_LABELS.get(key, key)}")
+            self.selected_text_name.set(f"Selected: {TEXT_ELEMENT_LABELS.get(key, key)}")
         else:
-            self.selected_text_name.set("選択中: なし")
+            self.selected_text_name.set("Selected: none")
         if hasattr(self, "preview"):
             self.preview.set_selected(key)
 
@@ -564,11 +614,8 @@ class ThumbnailApp(ctk.CTk):
         self._refresh_preview_after_text_edit()
 
     def _drag_text_element(self, key: str, dx: int, dy: int):
-        """ドラッグ中は座標値のみ更新し、Canvasの選択枠だけ動かす。
-        再合成はマウスを離したとき（on_release）にまとめて行う。"""
         self._select_text_element(key)
         self._move_text_element(key, dx, dy, refresh=False)
-        # bboxをその場で動かして選択枠をリアルタイム追従させる
         for element in self._preview_text_elements:
             if element["key"] == key:
                 x1, y1, x2, y2 = element["bbox"]
@@ -578,8 +625,6 @@ class ThumbnailApp(ctk.CTk):
         self.preview.set_selected(key)
 
     def _on_key_press(self, event):
-        """選択中の文字要素を矢印キーで移動し、Ctrl+上下でサイズを変える。
-        キー操作は 120ms デバウンスして再合成の頻度を抑える。"""
         if not self.selected_text_key:
             return
         key_name = event.keysym
@@ -604,7 +649,6 @@ class ThumbnailApp(ctk.CTk):
         elif key_name == "Right":
             dx = step
 
-        # 座標・枠だけ即時更新し、再合成は120ms後にまとめて実行
         self._move_text_element(self.selected_text_key, dx, dy, refresh=False)
         for element in self._preview_text_elements:
             if element["key"] == self.selected_text_key:
@@ -625,7 +669,6 @@ class ThumbnailApp(ctk.CTk):
         self.preview.set_selected(self.selected_text_key)
 
     def _collect_params(self) -> dict:
-        """UIの入力値をまとめてdictで返す。"""
         template = copy.deepcopy(self.current_template)
         text_cfg = template.setdefault("text", {})
 
@@ -707,7 +750,7 @@ class ThumbnailApp(ctk.CTk):
         }
 
     # ──────────────────────────────────────────
-    #  プレビュー / PNG出力
+    #  Preview / Export
     # ──────────────────────────────────────────
 
     def _preview(self):
@@ -725,11 +768,11 @@ class ThumbnailApp(ctk.CTk):
                 guild_font_paths=params["guild_font_paths"],
                 language_font_paths=params["language_font_paths"],
             )
-            self._preview_text_elements = elements  # ドラッグ追従用にキャッシュ
+            self._preview_text_elements = elements
             self.preview.set_text_elements(elements)
             self.preview.set_selected(self.selected_text_key)
         except Exception as e:
-            messagebox.showerror("エラー", f"プレビュー生成に失敗しました:\n{e}")
+            messagebox.showerror("Error", f"Preview failed:\n{e}")
 
     def _export(self):
         self._preview()
@@ -752,5 +795,5 @@ class ThumbnailApp(ctk.CTk):
             counter += 1
 
         self._preview_image.save(str(out_path), "PNG")
-        messagebox.showinfo("出力完了", f"保存しました:\n{out_path.resolve()}")
-        print(f"[出力] {out_path.resolve()}")
+        messagebox.showinfo("Exported", f"Saved:\n{out_path.resolve()}")
+        print(f"[Export] {out_path.resolve()}")
