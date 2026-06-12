@@ -249,11 +249,11 @@ def _font_for_guild(
 
 
 TEXT_ELEMENT_LABELS = {
-    "date": "日付",
-    "node_name": "拠点名",
+    "date": "Date",
+    "node_name": "Node Name",
     "subtitle": "Node War",
-    "guilds": "ギルド名",
-    "branding": "右下表示テキスト",
+    "guilds": "Guild Names",
+    "branding": "Branding Text",
 }
 
 
