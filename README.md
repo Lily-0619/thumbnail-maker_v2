@@ -4,8 +4,8 @@
 
 - 起動: `python main.py`(Windowsは `起動.bat`)
 - **AI画像生成(背景+後方エフェクト)のセットアップと使い方** → [docs/AI画像生成_やり方説明書.md](docs/AI画像生成_やり方説明書.md)
+  - ローカルの Stable Diffusion WebUI(AUTOMATIC1111)を使用。APIキー不要・無料
 - AIの設定: `config/ai_config.json` / プロンプト調整: `config/ai_prompts.json`
-- APIキーは `.env.example` をコピーして `.env` を作り、そこに記入する
 
 ---
 

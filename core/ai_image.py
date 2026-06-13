@@ -6,9 +6,10 @@ AI画像生成モジュール。
 後方エフェクト(キャラに合わせた透過エフェクト)をAIで生成する。
 
 対応プロバイダー:
-  - openai   : OpenAI gpt-image-1(推奨。透過PNGを直接生成できる)
-  - stability: Stability AI(Stable Diffusion公式API)
-  - sdwebui  : ローカルのStable Diffusion WebUI(AUTOMATIC1111)
+  - sdwebui  : ローカルのStable Diffusion WebUI(AUTOMATIC1111)。標準設定。
+               APIキー不要・無料・全てローカルで動く。
+  - stability: Stability AI(クラウドAPI。使う場合のみAPIキーが必要)
+  - openai   : OpenAI gpt-image-1(クラウドAPI。現在は未使用)
 
 設定ファイル:
   - config/ai_config.json  : プロバイダー・画像サイズなどの設定
@@ -259,24 +260,41 @@ def _generate_stability(prompt: str, negative: str, config: dict) -> Image.Image
     return Image.open(io.BytesIO(resp.content))
 
 
-def _generate_sdwebui(prompt: str, negative: str, config: dict) -> Image.Image:
+def _generate_sdwebui(
+    prompt: str,
+    negative: str,
+    config: dict,
+    init_image: Path | None = None,
+) -> Image.Image:
+    """ローカルのStable Diffusion WebUIで生成する。
+
+    init_image を渡すと img2img になり、サンプル画像の雰囲気に寄せて生成する。
+    """
     cfg = config.get("sdwebui", {})
     url = cfg.get("url", "http://127.0.0.1:7860").rstrip("/")
-    timeout = config.get("timeout_seconds", 180)
+    timeout = config.get("timeout_seconds", 300)
 
     payload = {
         "prompt": prompt,
         "negative_prompt": negative,
-        "width": cfg.get("width", 1344),
-        "height": cfg.get("height", 768),
+        "width": cfg.get("width", 960),
+        "height": cfg.get("height", 540),
         "steps": cfg.get("steps", 28),
         "cfg_scale": cfg.get("cfg_scale", 7),
     }
     if cfg.get("sampler_name"):
         payload["sampler_name"] = cfg["sampler_name"]
 
+    endpoint = "txt2img"
+    if init_image is not None:
+        endpoint = "img2img"
+        with open(init_image, "rb") as f:
+            payload["init_images"] = [base64.b64encode(f.read()).decode("ascii")]
+        # 1.0に近いほど見本から離れる(0.6〜0.8あたりが見本の雰囲気を残しつつ変化する)
+        payload["denoising_strength"] = cfg.get("denoising_strength", 0.7)
+
     try:
-        resp = requests.post(f"{url}/sdapi/v1/txt2img", json=payload, timeout=timeout)
+        resp = requests.post(f"{url}/sdapi/v1/{endpoint}", json=payload, timeout=timeout)
     except requests.exceptions.ConnectionError:
         raise AIImageError(
             f"ローカルのStable Diffusion WebUIに接続できません({url})。\n"
@@ -320,6 +338,10 @@ def _save_image(img: Image.Image, out_dir: Path, name: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = out_dir / f"{name}_{timestamp}.png"
+    counter = 1
+    while out_path.exists():
+        out_path = out_dir / f"{name}_{timestamp}_{counter:02d}.png"
+        counter += 1
     img.save(str(out_path), "PNG")
     return out_path
 
@@ -340,17 +362,17 @@ def generate_background(node_name: str) -> Path:
         raise AIImageError("拠点名が空です。先に拠点名を入力してください。")
 
     config = load_ai_config()
-    provider = config.get("provider", "openai")
+    provider = config.get("provider", "sdwebui")
     prompt, negative = build_background_prompt(node_name)
 
-    if provider == "openai":
-        img = _generate_openai(prompt, config)
+    if provider == "sdwebui":
+        img = _generate_sdwebui(prompt, negative, config)
     elif provider == "stability":
         img = _generate_stability(prompt, negative, config)
-    elif provider == "sdwebui":
-        img = _generate_sdwebui(prompt, negative, config)
+    elif provider == "openai":
+        img = _generate_openai(prompt, config)
     else:
-        raise AIImageError(f"不明なprovider設定です: {provider} (openai / stability / sdwebui のいずれか)")
+        raise AIImageError(f"不明なprovider設定です: {provider} (sdwebui / stability / openai のいずれか)")
 
     out_dir = PROJECT_ROOT / config.get("background_output_dir", "assets/backgrounds/ai")
     return _save_image(img.convert("RGB"), out_dir, f"bg_{_safe_slug(node_name)}")
@@ -360,7 +382,7 @@ def generate_effect(effect_type: str) -> Path:
     """エフェクト種類から後方エフェクト(透過PNG)を生成して保存する。
 
     material/サンプル(またはmaterial/sample)に同名フォルダ・ファイルがあれば
-    参考画像として使用する(openaiのみ)。
+    参考画像として使用する(sdwebuiではimg2img、openaiではedits)。
 
     Returns:
         保存したPNGファイルのパス
@@ -370,21 +392,23 @@ def generate_effect(effect_type: str) -> Path:
         raise AIImageError("エフェクト種類が空です。")
 
     config = load_ai_config()
-    provider = config.get("provider", "openai")
+    provider = config.get("provider", "sdwebui")
     prompt, negative = build_effect_prompt(effect_type)
 
-    if provider == "openai":
+    if provider == "sdwebui":
+        reference = find_reference_image(effect_type, config)
+        img = _generate_sdwebui(prompt + ", pure black background", negative, config, init_image=reference)
+        img = _black_to_alpha(img)
+    elif provider == "stability":
+        img = _black_to_alpha(_generate_stability(prompt + " on a pure black background", negative, config))
+    elif provider == "openai":
         reference = find_reference_image(effect_type, config)
         img = _generate_openai(prompt, config, transparent=True, reference_path=reference)
         if "A" not in img.getbands() or img.convert("RGBA").getextrema()[3] == (255, 255):
             # 万一透過になっていない場合は黒→透過変換でフォールバック
             img = _black_to_alpha(img)
-    elif provider == "stability":
-        img = _black_to_alpha(_generate_stability(prompt + " on a pure black background", negative, config))
-    elif provider == "sdwebui":
-        img = _black_to_alpha(_generate_sdwebui(prompt + ", pure black background", negative, config))
     else:
-        raise AIImageError(f"不明なprovider設定です: {provider} (openai / stability / sdwebui のいずれか)")
+        raise AIImageError(f"不明なprovider設定です: {provider} (sdwebui / stability / openai のいずれか)")
 
     out_dir = PROJECT_ROOT / config.get("effect_output_dir", "assets/effects/ai")
     return _save_image(img.convert("RGBA"), out_dir, f"effect_{_safe_slug(effect_type)}")
@@ -394,7 +418,7 @@ def check_setup() -> str:
     """セットアップ状態を確認して結果メッセージを返す(課金は発生しない)。"""
     lines = []
     config = load_ai_config()
-    provider = config.get("provider", "openai")
+    provider = config.get("provider", "sdwebui")
     lines.append(f"・provider 設定           : {provider}")
     lines.append("・config/ai_config.json   : OK")
     load_ai_prompts()
