@@ -1,0 +1,67 @@
+{
+  "_comment": "AI生成のプロンプト設定。文章は自由に書き換えてOK。{node_name}/{hint}/{style}/{type_desc} は自動で置き換わる。",
+
+  "background": {
+    "_comment": "拠点名から連想されるリアルダークファンタジー調の背景。node_hintsに拠点ごとの描写を追加できる。",
+    "template": "A realistic dark fantasy landscape inspired by '{node_name}', a battlefield in a medieval fantasy world. {hint} Epic game key-art style background. Wide cinematic 16:9 composition, the left half kept relatively simple and dim so large golden title text can be placed over it. {style}",
+    "style": "photorealistic, dark fantasy, moody atmosphere, dramatic stormy sky, cinematic lighting, volumetric fog, highly detailed, no people, no characters, no text, no watermark",
+    "negative": "text, watermark, logo, people, characters, cartoon, anime, illustration, low quality, blurry, oversaturated",
+    "node_hints": {
+      "_default": "",
+      "Ehwaz Hill": "A windswept grassy hill at dusk, ancient weathered runestones on the slope, distant war banners.",
+      "Kasula Farm": "An abandoned medieval farm at night, broken fences, a burning barn glowing in the distance.",
+      "Forest of Seclusion": "A dense ancient forest shrouded in mist, twisted dark trees, faint moonlight breaking through the canopy.",
+      "Highlands": "Rocky highland plateaus under a thunderous sky, sheer cliffs and ancient stone watchtowers.",
+      "Rhutum Outstation": "A crude wooden outpost with totems and bonfires, tribal banners, smoke rising into a dark sky.",
+      "Kaia Pier": "A fog-covered lakeside pier at night, dark still water, lanterns reflecting on the surface.",
+      "Castle Ruins Entrance": "The crumbling gate of a ruined castle, broken battlements, ivy and rubble, torchlight in the dark.",
+      "Velia Farmlands": "Rolling farmland at dusk near a seaside village, windmills silhouetted against a stormy sunset.",
+      "Quint Hill": "A barren hill with a giant's bonfire, scattered boulders and bones under a blood-red sky.",
+      "Ahto Farm": "A frosty mountain farm, snow dusted fields and a frozen well under cold grey clouds.",
+      "Plains of Agris": "Vast dark plains with waving grass, distant lightning, ancient standing stones.",
+      "Bradie Fortress": "A grim stone fortress with high walls and iron gates, siege scars, torches burning on the ramparts.",
+      "Marni's Second Lab": "A sinister alchemist laboratory ruin, glowing green vials, arcane machinery and crackling energy.",
+      "Treant Forest": "An enchanted forest of giant living trees, glowing spirit lights, roots covered in moss.",
+      "Lynch Farm Ruins": "A ruined haunted farm estate, dead trees, broken mansion silhouette under a pale moon.",
+      "Northern Plantation": "A vast plantation at night, rows of crops fading into fog, a dark manor in the distance.",
+      "Hidden Monastery": "A secluded mountain monastery, weathered stone statues, candlelight glowing in arched windows.",
+      "Anti-troll Fortification": "A heavy wooden and stone barricade wall in a mountain pass, spikes and siege defenses, snow falling.",
+      "Crioville": "A small fishing village at night, thatched roofs, mist rolling in from a dark sea.",
+      "Orc Camp": "A brutal orc war-camp, crude spiked palisades, bonfires, skull totems and rising smoke.",
+      "Abandoned Iron Mine": "A derelict mine entrance in a rocky canyon, rusted carts and rails, eerie glow from the tunnel.",
+      "Bree Tree Forest": "A forest dominated by one colossal ancient tree, gnarled branches, fireflies in the gloom.",
+      "Altar of Agris": "A pagan stone altar on a hilltop, ritual fire, carved monoliths under a crimson sky.",
+      "Northern Quarry": "A vast stone quarry with carved cliff faces, scaffolding, dust and cold morning fog.",
+      "Harpy Cliff": "Towering wind-blasted cliffs with circling silhouettes in the sky, nests on rocky ledges.",
+      "Naga Extraction Mill": "A swampy riverside mill with crude serpent-cult structures, green torchlight, murky water.",
+      "Inner Mansha Forest": "A dark goblin-infested forest, crooked huts, glowing eyes in the undergrowth.",
+      "Calpheon Siege War": "A grand medieval capital city under siege at night, burning trebuchet fire arcing over massive walls and a gothic cathedral.",
+      "Valencian Siege War": "A golden desert palace city under siege, sandstorm at dusk, domed towers and war banners.",
+      "Forest of Plunder": "A lawless bandit forest, looted wagons, hanging lanterns, smoke between dark pines.",
+      "Naga Swamplands": "A vast murky swamp, half-sunken ruins, glowing green will-o-wisps over black water.",
+      "Dernyl Farm": "A lonely farmstead on dark plains, scarecrows silhouetted against a giant low moon.",
+      "Forsaken Lands": "A cursed barren wasteland, cracked earth, dead trees and ash drifting in the wind.",
+      "Cursed Lands": "A blighted land of black thorns and purple miasma, ruined shrines, ominous glow on the horizon.",
+      "Old Dandelion": "An ancient overgrown battlefield, a colossal weathered statue half-buried in flowering grass at dusk.",
+      "Behr River Downstream": "A wide dark river at night, mist over the water, old wooden bridge and reeds.",
+      "Altinova Entrance": "The grand desert gate of an eastern trade city at dusk, braziers burning, caravans' silhouettes."
+    }
+  },
+
+  "effect": {
+    "_comment": "キャラの後方に置く透過エフェクト。typesに新しい種類を追加すればUIのドロップダウンにも出る。",
+    "template": "A single magical visual effect for a dark fantasy game character: {type_desc}. The effect only, centered, radiating outward like an aura behind a hero. No character, no person, no scenery, no background landscape. {style}",
+    "style": "glowing, luminous, translucent particles, dramatic, high detail, dark fantasy game VFX, key-art quality",
+    "negative": "character, person, face, body, scenery, landscape, text, watermark, frame, border, low quality",
+    "types": {
+      "fire": "swirling orange and crimson flames with burning embers rising in a fierce vortex",
+      "ice": "sharp blue ice crystals and frost shards exploding outward with freezing mist",
+      "lightning": "crackling violet-blue lightning bolts and electric arcs bursting in all directions",
+      "dark": "ominous dark purple shadow wisps and black smoke tendrils coiling like a demonic aura",
+      "holy": "radiant golden rays of holy light with floating sparkles and feather-like glow",
+      "flower": "a storm of pink and white flower petals swirling gracefully in the wind with soft glow",
+      "butterfly": "luminous blue and teal butterflies scattering with sparkling light trails",
+      "blue_purple_magic": "arcane blue and purple magic circles with glowing runes and mystic energy ribbons"
+    }
+  }
+}

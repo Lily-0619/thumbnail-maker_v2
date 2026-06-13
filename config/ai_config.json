@@ -1,0 +1,36 @@
+{
+  "_comment": "AI画像生成の設定。providerを openai / stability / sdwebui から選ぶ。",
+
+  "provider": "openai",
+
+  "openai": {
+    "_comment": "quality: low(安い・粗い) / medium(おすすめ) / high(高い・綺麗)",
+    "model": "gpt-image-1",
+    "size": "1536x1024",
+    "quality": "medium"
+  },
+
+  "stability": {
+    "endpoint": "https://api.stability.ai/v2beta/stable-image/generate/core",
+    "aspect_ratio": "16:9"
+  },
+
+  "sdwebui": {
+    "_comment": "ローカルのStable Diffusion WebUI(AUTOMATIC1111)を --api 付きで起動しておくこと",
+    "url": "http://127.0.0.1:7860",
+    "width": 1344,
+    "height": 768,
+    "steps": 28,
+    "cfg_scale": 7,
+    "sampler_name": "DPM++ 2M Karras"
+  },
+
+  "background_output_dir": "assets/backgrounds/ai",
+  "effect_output_dir": "assets/effects/ai",
+
+  "_comment_samples": "後方エフェクトの参考画像を探すフォルダ(上から優先)。openai使用時のみ参照される。",
+  "sample_dirs": ["material/サンプル", "material/sample", "material/samples"],
+  "use_sample_reference": true,
+
+  "timeout_seconds": 180
+}

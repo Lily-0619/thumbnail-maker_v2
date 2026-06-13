@@ -143,7 +143,7 @@ def load_font(font_path: str, size: int) -> ImageFont.FreeTypeFont:
 def hex_to_rgb(hex_color: str) -> tuple:
     """#rrggbb → (r, g, b)"""
     hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def draw_text_with_stroke(

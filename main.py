@@ -12,7 +12,7 @@ import sys
 # プロジェクトルートを sys.path に追加（相対importのため）
 sys.path.insert(0, os.path.dirname(__file__))
 
-from ui.app import ThumbnailApp
+from ui.app import ThumbnailApp  # noqa: E402
 
 
 def main():
