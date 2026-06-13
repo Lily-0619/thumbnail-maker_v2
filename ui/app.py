@@ -6,6 +6,7 @@ customtkinter main UI window.
 import copy
 import json
 import re
+import threading
 from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -13,6 +14,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
+from core import ai_image
 from core.composer import compose_thumbnail
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
@@ -143,6 +145,10 @@ class ThumbnailApp(ctk.CTk):
         self.selected_text_key = None
         self.selected_text_name = ctk.StringVar(value="Selected: none")
         self.options_visible = False
+        self.ai_status = ctk.StringVar(value="")
+        self._ai_busy = False
+        self._ai_pending = 0
+        self._ai_errors = []
 
         self._build_layout()
         self._bind_auto_output_name()
@@ -250,6 +256,48 @@ class ThumbnailApp(ctk.CTk):
         ctk.CTkLabel(parent, text="🧙 Character", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkEntry(parent, textvariable=self.char_path, placeholder_text="None selected").pack(fill="x", **pad)
         ctk.CTkButton(parent, text="Pick Character", command=self._select_char).pack(fill="x", **pad)
+
+        ctk.CTkLabel(parent, text="🤖 AI Generate", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(
+            parent,
+            text="Background is generated from the Node name (dark fantasy style). Effect is a transparent PNG behind the character.",
+            text_color="gray",
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", **pad)
+        effect_row = ctk.CTkFrame(parent)
+        effect_row.pack(fill="x", **pad)
+        ctk.CTkLabel(effect_row, text="Effect type", width=100, anchor="w").pack(side="left", padx=(0, 6))
+        self.ai_effect_type = ctk.CTkOptionMenu(effect_row, values=ai_image.list_effect_types())
+        self.ai_effect_type.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            parent,
+            text="✨ Generate BG + Effect (AI)",
+            height=38,
+            command=lambda: self._ai_generate(gen_bg=True, gen_effect=True),
+        ).pack(fill="x", **pad)
+        ai_btn_row = ctk.CTkFrame(parent)
+        ai_btn_row.pack(fill="x", **pad)
+        ctk.CTkButton(
+            ai_btn_row,
+            text="BG only",
+            command=lambda: self._ai_generate(gen_bg=True, gen_effect=False),
+        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ctk.CTkButton(
+            ai_btn_row,
+            text="Effect only",
+            command=lambda: self._ai_generate(gen_bg=False, gen_effect=True),
+        ).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ctk.CTkLabel(parent, textvariable=self.ai_status, text_color="#e7b93e", wraplength=430, justify="left").pack(
+            anchor="w", **pad
+        )
+        ctk.CTkLabel(parent, text="🌟 Back Effect", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(
+            parent,
+            textvariable=self.effect_path,
+            placeholder_text="Set automatically by AI, or select a file",
+        ).pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="Select Effect", command=self._select_effect).pack(fill="x", **pad)
 
         ctk.CTkButton(
             parent,
@@ -421,8 +469,75 @@ class ThumbnailApp(ctk.CTk):
             on_select=lambda p: self.char_path.set(self._relative_project_path(p)),
         )
 
+    def _select_effect(self):
+        p = filedialog.askopenfilename(
+            title="Select Back Effect Image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")],
+        )
+        if p:
+            self.effect_path.set(self._relative_project_path(p))
+
     def _select_font(self):
         self._select_font_var(self.font_path)
+
+    # ──────────────────────────────────────────
+    #  AI generation
+    # ──────────────────────────────────────────
+
+    def _ai_generate(self, gen_bg: bool, gen_effect: bool):
+        if self._ai_busy:
+            messagebox.showinfo("AI Generate", "Generation is already running. Please wait.")
+            return
+
+        jobs = []
+        if gen_bg:
+            node_name = self.node_entry.get().strip()
+            if not node_name:
+                messagebox.showwarning("AI Generate", "Enter a Node name first (background prompt is built from it).")
+                return
+            jobs.append(("bg", node_name))
+        if gen_effect:
+            jobs.append(("effect", self.ai_effect_type.get()))
+        if not jobs:
+            return
+
+        self._ai_busy = True
+        self._ai_pending = len(jobs)
+        self._ai_errors = []
+        self.ai_status.set("⏳ Generating... (about 10-60 sec per image)")
+        for kind, arg in jobs:
+            threading.Thread(target=self._ai_worker, args=(kind, arg), daemon=True).start()
+
+    def _ai_worker(self, kind: str, arg: str):
+        try:
+            if kind == "bg":
+                path = ai_image.generate_background(arg)
+            else:
+                path = ai_image.generate_effect(arg)
+            self.after(0, self._ai_job_done, kind, str(path), "")
+        except Exception as e:
+            self.after(0, self._ai_job_done, kind, "", str(e))
+
+    def _ai_job_done(self, kind: str, path: str, error: str):
+        if error:
+            label = "Background" if kind == "bg" else "Effect"
+            self._ai_errors.append(f"[{label}]\n{error}")
+        elif kind == "bg":
+            self.bg_path.set(self._relative_project_path(path))
+        else:
+            self.effect_path.set(self._relative_project_path(path))
+
+        self._ai_pending -= 1
+        if self._ai_pending > 0:
+            return
+
+        self._ai_busy = False
+        if self._ai_errors:
+            self.ai_status.set("❌ AI generation failed. See error dialog.")
+            messagebox.showerror("AI Generation Error", "\n\n".join(self._ai_errors))
+        else:
+            self.ai_status.set("✅ Done! Images saved and applied to the form.")
+            self._preview()
 
     def _select_font_var(self, font_var):
         p = filedialog.askopenfilename(

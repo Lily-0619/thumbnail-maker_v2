@@ -1,3 +1,14 @@
+# BDM Thumbnail Maker
+
+黒い砂漠モバイルのノードウォー用サムネイルを生成するアプリです。
+
+- 起動: `python main.py`(Windowsは `起動.bat`)
+- **AI画像生成(背景+後方エフェクト)のセットアップと使い方** → [docs/AI画像生成_やり方説明書.md](docs/AI画像生成_やり方説明書.md)
+  - ローカルの Stable Diffusion WebUI(AUTOMATIC1111)を使用。APIキー不要・無料
+- AIの設定: `config/ai_config.json` / プロンプト調整: `config/ai_prompts.json`
+
+---
+
 # discordpy-startup
 
 [![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)

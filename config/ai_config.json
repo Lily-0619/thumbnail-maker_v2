@@ -1,0 +1,41 @@
+{
+  "_comment": "AI画像生成の設定。providerは sdwebui(ローカル・無料・標準) / stability / openai から選ぶ。",
+
+  "provider": "sdwebui",
+
+  "sdwebui": {
+    "_comment": "ローカルのStable Diffusion WebUI(AUTOMATIC1111)を --api 付きで起動しておくこと。",
+    "_comment_size": "SD1.5系モデルなら 960x540 推奨。SDXL系モデルなら 1344x768 に上げてOK。",
+    "_comment_reference": "denoising_strength: サンプル画像(material/サンプル)をどれだけ変化させるか。0.6=見本に近い 〜 0.8=大きく変化",
+    "url": "http://127.0.0.1:7860",
+    "width": 960,
+    "height": 540,
+    "steps": 28,
+    "cfg_scale": 7,
+    "sampler_name": "Euler a",
+    "denoising_strength": 0.7
+  },
+
+  "stability": {
+    "_comment": "クラウドAPIを使う場合のみ。.env に STABILITY_API_KEY が必要。",
+    "endpoint": "https://api.stability.ai/v2beta/stable-image/generate/core",
+    "aspect_ratio": "16:9"
+  },
+
+  "openai": {
+    "_comment": "現在は未使用。使う場合のみ .env に OPENAI_API_KEY が必要。",
+    "model": "gpt-image-1",
+    "size": "1536x1024",
+    "quality": "medium"
+  },
+
+  "background_output_dir": "assets/backgrounds/ai",
+  "effect_output_dir": "assets/effects/ai",
+
+  "_comment_samples": "後方エフェクトの参考画像を探すフォルダ(上から優先)。見つかるとその雰囲気に寄せて生成する。",
+  "sample_dirs": ["material/サンプル", "material/sample", "material/samples"],
+  "use_sample_reference": true,
+
+  "_comment_timeout": "生成待ちの上限秒数。GPUが遅い場合は大きくする。",
+  "timeout_seconds": 300
+}
