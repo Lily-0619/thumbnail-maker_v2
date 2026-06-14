@@ -22,8 +22,8 @@
   - エフェクト: `assets/effects/ai/`
 
 ```
-[ComfyUI を起動しておく(ローカル / http://127.0.0.1:8188)]
-                 ↑ ここにアプリが自動でお願いしに行く
+[アプリ起動時に ComfyUI 接続確認(ローカル / http://127.0.0.1:8188)]
+                 ↑ 未起動なら設定に従って裏で自動起動
 [拠点名を入力] ──→ [✨ Generate BG + Effect ボタン] ──→ AIが2枚同時に生成
                                                           │
                             背景 → assets/backgrounds/ai/ に保存 & 自動セット
@@ -51,9 +51,9 @@
 | 最初に1回だけ | ② ダークファンタジー向きのモデルを入れる | 15分(DL待ち) |
 | 最初に1回だけ | ③ ComfyUIを起動して動作確認 | 5分 |
 | 任意 | ④ エフェクトの見本画像を `material/サンプル/` に置く | 数分 |
-| **毎回** | **ComfyUIを起動してから**、アプリで拠点名を入れてボタンを押す | 数秒の操作 |
+| **毎回** | アプリを起動する(ComfyUIは必要に応じて自動起動) | 数秒の操作 |
 
-> アプリ側のプログラムは**すでに完成しています**。あなたがやるのは「ComfyUIを動く状態にして起動しておく」ことだけです。
+> アプリ側のプログラムは**すでに完成しています**。あなたがやるのは「ComfyUIを動く状態にする」ことと、`config/ai_config.json` の起動パスを自分のPCに合わせることです。
 
 ---
 
@@ -124,22 +124,37 @@ cd /d E:\bdm-thumbnail_app_v02
 
 `assets/backgrounds/ai/` と `assets/effects/ai/` にPNGが保存されたら成功です。
 
+### アプリ起動時の自動起動設定
+
+サムネイルアプリ起動時にComfyUIも自動起動したい場合は、`config/ai_config.json` の `comfyui` にある次の項目を確認してください。
+
+```json
+"auto_start": true,
+"python_path": "E:/AI/ComfyUI-master/.venv/Scripts/python.exe",
+"main_path": "E:/AI/ComfyUI-master/main.py",
+"working_dir": "E:/AI/ComfyUI-master"
+```
+
+別の場所にComfyUIを置いている場合は、この3つのパスだけ自分のPCに合わせて変更します。
+
 ---
 
 ## 7. 普段の使い方(アプリ)
 
-1. **先に ComfyUI を起動しておく**(`run_nvidia_gpu.bat`。黒い画面は開いたままにする)
-2. いつもどおり `起動.bat` でサムネイルアプリを起動
-3. **Node(拠点名)** を入力 or プルダウンから選ぶ
-4. 左側の「**🤖 AI Generate**」セクションで:
+1. いつもどおり `起動.bat` でサムネイルアプリを起動
+   - ComfyUIがすでに起動済みなら、そのまま使います
+   - 起動していなければ、`config/ai_config.json` の設定に従って裏で起動します
+   - 自動起動がうまくいかない場合は、手動でComfyUIを起動してからアプリを使ってください
+2. **Node(拠点名)** を入力 or プルダウンから選ぶ
+3. 左側の「**🤖 AI Generate**」セクションで:
    - **Effect type** でエフェクトの種類を選ぶ
      (fire / ice / lightning / dark / holy / flower / butterfly / blue_purple_magic)
    - 「**✨ Generate BG + Effect (AI)**」を押す → 背景とエフェクトが**同時に**生成されます
    - 片方だけ作り直したいときは「BG only」「Effect only」
-5. 生成が終わると自動でセットされ、プレビューに反映されます
+4. 生成が終わると自動でセットされ、プレビューに反映されます
    (時間はGPU性能次第。目安: RTX 3060 Ti なら10〜30秒/枚)
-6. 気に入らなければもう一度ボタンを押せば**別の画像**が出ます
-7. あとはいつもどおり「📤 Export PNG」
+5. 気に入らなければもう一度ボタンを押せば**別の画像**が出ます
+6. あとはいつもどおり「📤 Export PNG」
 
 > 💡 過去に生成した画像は `assets/backgrounds/ai/`・`assets/effects/ai/` にたまっていくので、
 > 「Select Background」「Select Effect」で選び直すこともできます。
@@ -193,6 +208,9 @@ cd /d E:\bdm-thumbnail_app_v02
 | `width` / `height` | 生成サイズ | SD1.5系: 768×432 / SDXL系: 1344×768 |
 | `steps` | 描き込み回数 | 20=速い 〜 35=丁寧 |
 | `sampler_name` / `scheduler` | 生成アルゴリズム | 通常はそのままでOK |
+| `auto_start` | アプリ起動時にComfyUIを自動起動するか | `true` |
+| `python_path` / `main_path` / `working_dir` | 自動起動に使うComfyUIの場所 | 自分のPCのComfyUIに合わせる |
+| `startup_timeout_seconds` | 自動起動後の接続待ち時間 | 初回起動が遅いなら増やす |
 | `timeout_seconds` | 待ち時間の上限 | 遅いなら600などに増やす |
 
 ※ JSONファイルは「`"` や `,` を消してしまう」と壊れるので、**文章や数字の中身だけ**書き換えてください。
@@ -203,7 +221,7 @@ cd /d E:\bdm-thumbnail_app_v02
 
 | 出るメッセージ・症状 | 原因 | 対処 |
 |---|---|---|
-| ComfyUIに接続できません | ComfyUIを起動していない | `run_nvidia_gpu.bat` で起動する。黒い画面を閉じていないか確認 |
+| ComfyUIに接続できません | ComfyUIを起動していない / 自動起動パスが違う | 手動で起動するか、`config/ai_config.json` の `python_path` / `main_path` / `working_dir` を確認 |
 | モデル(checkpoint)が見つかりません | モデル未配置 | 手順②で `models\checkpoints\` に `.safetensors` を入れる |
 | CUDA out of memory(黒い画面に赤字) | GPUメモリ不足 | `width/height` を下げる。SDXLなら軽いSD1.5系モデルに変える |
 | タイムアウトしました | 生成が遅い | `config/ai_config.json` の `comfyui` の `timeout_seconds` を 600 に増やす |

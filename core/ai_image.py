@@ -29,7 +29,9 @@ import json
 import os
 import random
 import re
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +46,7 @@ ENV_PATH = PROJECT_ROOT / ".env"
 
 OPENAI_GENERATIONS_URL = "https://api.openai.com/v1/images/generations"
 OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
+_COMFYUI_START_LOCK = threading.Lock()
 
 
 class AIImageError(Exception):
@@ -324,6 +327,110 @@ def _round8(value: int) -> int:
     return max(64, int(round(value / 8)) * 8)
 
 
+def _comfyui_url(cfg: dict) -> str:
+    return cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
+
+
+def _is_comfyui_running(url: str, timeout: int = 3) -> bool:
+    try:
+        resp = requests.get(f"{url}/system_stats", timeout=timeout)
+        return resp.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
+
+
+def _config_path(value: str, base_dir: Path | None = None) -> Path:
+    expanded = os.path.expandvars(str(value or "").strip())
+    if not expanded:
+        return Path()
+    path = Path(expanded).expanduser()
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    return path
+
+
+def ensure_comfyui_ready(config: dict | None = None, start_if_needed: bool = True) -> tuple[bool, str]:
+    """ComfyUIの接続確認を行い、必要なら設定に従ってローカル起動する。"""
+    config = config or load_ai_config()
+    if config.get("provider", "comfyui") != "comfyui":
+        return True, "ComfyUI provider is not selected."
+
+    cfg = config.get("comfyui", {})
+    url = _comfyui_url(cfg)
+    if _is_comfyui_running(url):
+        return True, f"ComfyUIは起動済みです({url})。"
+
+    with _COMFYUI_START_LOCK:
+        if _is_comfyui_running(url):
+            return True, f"ComfyUIは起動済みです({url})。"
+
+        if not start_if_needed:
+            return False, f"ComfyUIに接続できません({url})。"
+
+        if not cfg.get("auto_start", False):
+            raise AIImageError(
+                f"ComfyUIに接続できません({url})。\n"
+                "自動起動はOFFです。ComfyUIを手動で起動するか、config/ai_config.json の comfyui.auto_start を true にしてください。"
+            )
+
+        missing = [key for key in ("python_path", "main_path", "working_dir") if not str(cfg.get(key, "")).strip()]
+        if missing:
+            raise AIImageError(
+                "ComfyUIの自動起動設定が足りません。\n"
+                f"config/ai_config.json の comfyui.{', comfyui.'.join(missing)} を設定してください。"
+            )
+
+        working_dir = _config_path(cfg.get("working_dir"))
+        python_path = _config_path(cfg.get("python_path"), working_dir)
+        main_path = _config_path(cfg.get("main_path"), working_dir)
+
+        problems = []
+        if not working_dir.exists():
+            problems.append(f"working_dir が見つかりません: {working_dir}")
+        if not python_path.exists():
+            problems.append(f"python_path が見つかりません: {python_path}")
+        if not main_path.exists():
+            problems.append(f"main_path が見つかりません: {main_path}")
+        if problems:
+            raise AIImageError("ComfyUIを自動起動できません。\n" + "\n".join(problems))
+
+        extra_args = cfg.get("extra_args", [])
+        if isinstance(extra_args, str):
+            extra_args = [arg for arg in extra_args.split(" ") if arg]
+        if not isinstance(extra_args, list):
+            extra_args = []
+
+        command = [str(python_path), str(main_path), *[str(arg) for arg in extra_args]]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(working_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError as e:
+            raise AIImageError(f"ComfyUIの起動に失敗しました。\n{e}")
+
+        startup_timeout = int(cfg.get("startup_timeout_seconds", 90))
+        deadline = time.time() + max(startup_timeout, 1)
+        while time.time() < deadline:
+            if _is_comfyui_running(url):
+                return True, f"ComfyUIを自動起動しました({url})。"
+            if process.poll() is not None:
+                raise AIImageError(
+                    "ComfyUIのプロセスが起動直後に終了しました。\n"
+                    "ComfyUI側のエラー内容を確認してください。"
+                )
+            time.sleep(1.0)
+
+        raise AIImageError(
+            f"ComfyUIを起動しましたが、{startup_timeout}秒以内に接続確認できませんでした({url})。\n"
+            "初回起動やモデル読み込みに時間がかかる場合は、config/ai_config.json の comfyui.startup_timeout_seconds を増やしてください。"
+        )
+
+
 def _comfyui_pick_checkpoint(url: str, cfg: dict, timeout: int) -> str:
     """使用するモデル(checkpoint)名を決める。
 
@@ -426,20 +533,13 @@ def _generate_comfyui(
     init_image を渡すと img2img になり、サンプル画像の雰囲気に寄せて生成する。
     """
     cfg = config.get("comfyui", {})
-    url = cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
+    url = _comfyui_url(cfg)
     timeout = config.get("timeout_seconds", 300)
     width = _round8(cfg.get("width", 768))
     height = _round8(cfg.get("height", 432))
 
     # 接続確認(分かりやすいエラーにするため最初に叩く)
-    try:
-        requests.get(f"{url}/system_stats", timeout=10)
-    except requests.exceptions.RequestException:
-        raise AIImageError(
-            f"ローカルのComfyUIに接続できません({url})。\n"
-            "ComfyUIを起動しているか確認してください(通常は http://127.0.0.1:8188 )。\n"
-            "別ポートで動かしている場合は config/ai_config.json の comfyui.url を合わせてください。"
-        )
+    ensure_comfyui_ready(config, start_if_needed=True)
 
     ckpt_name = _comfyui_pick_checkpoint(url, cfg, timeout)
 
@@ -622,13 +722,19 @@ def check_setup() -> str:
 
     if provider == "comfyui":
         cfg = config.get("comfyui", {})
-        url = cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
-        try:
-            requests.get(f"{url}/system_stats", timeout=5)
+        url = _comfyui_url(cfg)
+        lines.append(f"・ComfyUI自動起動        : {'ON' if cfg.get('auto_start', False) else 'OFF'}")
+        if cfg.get("auto_start", False):
+            missing = [key for key in ("python_path", "main_path", "working_dir") if not str(cfg.get(key, "")).strip()]
+            lines.append(
+                "・ComfyUI起動設定        : "
+                + ("OK" if not missing else f"NG({', '.join(missing)} が未設定)")
+            )
+        if _is_comfyui_running(url, timeout=5):
             lines.append(f"・ComfyUI接続({url}) : OK")
-        except Exception:
-            lines.append(f"・ComfyUI接続({url}) : NG(ComfyUIを起動してください)")
         else:
+            lines.append(f"・ComfyUI接続({url}) : NG(ComfyUIを起動してください)")
+        if _is_comfyui_running(url, timeout=5):
             try:
                 ckpt = _comfyui_pick_checkpoint(url, cfg, 15)
                 lines.append(f"・モデル(checkpoint)      : OK({ckpt})")

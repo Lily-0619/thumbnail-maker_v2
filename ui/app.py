@@ -15,7 +15,7 @@ import customtkinter as ctk
 from PIL import Image
 
 from core import ai_image
-from core.composer import compose_thumbnail
+from core.composer import build_asset_element_bounds, compose_thumbnail
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
     DEFAULT_COMMON_FONT_PATH,
@@ -28,7 +28,7 @@ from ui.preview import PreviewPanel
 
 
 # ── Theme ──
-ctk.set_appearance_mode("dark")
+ctk.set_appearance_mode("light")
 _THEME_PATH = Path("config/pink_theme.json")
 if _THEME_PATH.exists():
     ctk.set_default_color_theme(str(_THEME_PATH))
@@ -55,6 +55,10 @@ LANGUAGE_FONT_DIRS = {
     "zh": [Path("font/CN")],
     "en": [Path("font/EN"), Path("font/RU")],
     "ru": [Path("font/RU")],
+}
+ASSET_ELEMENT_LABELS = {
+    "character": "Character",
+    "back_effect": "Back Effect",
 }
 
 
@@ -142,6 +146,8 @@ class ThumbnailApp(ctk.CTk):
         self.node_options = self._load_node_options()
         self._preview_image = None
         self._preview_text_elements = []
+        self._preview_asset_elements = []
+        self._character_preview_image = None
         self.selected_text_key = None
         self.selected_text_name = ctk.StringVar(value="Selected: none")
         self.options_visible = False
@@ -151,8 +157,12 @@ class ThumbnailApp(ctk.CTk):
         self._ai_errors = []
 
         self._build_layout()
+        self._apply_template_to_controls()
+        self._update_character_preview()
+        self._bind_live_preview_controls()
         self._bind_auto_output_name()
         self._update_output_name()
+        self.after(300, self._check_comfyui_on_startup)
 
     # ──────────────────────────────────────────
     #  Layout
@@ -176,8 +186,8 @@ class ThumbnailApp(ctk.CTk):
         self.preview = PreviewPanel(right, height=430)
         self.preview.grid(row=0, column=0, padx=10, pady=10, sticky="new")
         self.preview.set_callbacks(
-            on_select=self._select_text_element,
-            on_drag=self._drag_text_element,
+            on_select=self._select_preview_element,
+            on_drag=self._drag_preview_element,
             on_release=self._refresh_preview_after_text_edit,
         )
         ctk.CTkLabel(right, textvariable=self.selected_text_name, font=ctk.CTkFont(size=14, weight="bold")).grid(
@@ -185,7 +195,7 @@ class ThumbnailApp(ctk.CTk):
         )
         ctk.CTkLabel(
             right,
-            text="Click text in preview to select → Arrow keys to move / Shift+Arrow for 10px / Ctrl+Up/Down to resize / Drag to move",
+            text="Click text, character, or back effect in preview → Drag or use arrow keys to move / Ctrl+Up/Down to resize",
             text_color="gray",
             wraplength=780,
             justify="center",
@@ -200,7 +210,7 @@ class ThumbnailApp(ctk.CTk):
         self.date_entry.insert(0, date.today().strftime("%Y.%m.%d"))
         self.date_entry.pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="🗓️ Day", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="Day", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         current_weekday = WEEKDAY_BY_INDEX[date.today().weekday()]
         self.weekday_menu = ctk.CTkOptionMenu(
             parent,
@@ -249,13 +259,31 @@ class ThumbnailApp(ctk.CTk):
             self.guild_entries.append(entry)
             self.guild_font_paths.append(font_var)
 
-        ctk.CTkLabel(parent, text="🖼️ Background", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="Leave blank for random from folder").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="Select Background", command=self._select_bg).pack(fill="x", **pad)
-
         ctk.CTkLabel(parent, text="🧙 Character", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(parent, textvariable=self.char_path, placeholder_text="None selected").pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="Pick Character", command=self._select_char).pack(fill="x", **pad)
+        char_row = ctk.CTkFrame(parent)
+        char_row.pack(fill="x", **pad)
+        char_preview = ctk.CTkFrame(char_row, width=178, height=132, fg_color="#fbeaf2")
+        char_preview.pack(side="left", padx=(0, 8), pady=4)
+        char_preview.pack_propagate(False)
+        self.character_preview_label = ctk.CTkLabel(
+            char_preview,
+            text="No character\nselected",
+            text_color="#6b3b52",
+            width=160,
+            height=116,
+        )
+        self.character_preview_label.pack(expand=True, fill="both", padx=8, pady=8)
+        char_controls = ctk.CTkFrame(char_row, fg_color="transparent")
+        char_controls.pack(side="left", fill="both", expand=True, pady=4)
+        ctk.CTkButton(char_controls, text="Pick Character", command=self._select_char).pack(fill="x", pady=(0, 6))
+        self.character_name_label = ctk.CTkLabel(
+            char_controls,
+            text="No character selected",
+            text_color="#6b3b52",
+            wraplength=240,
+            justify="left",
+        )
+        self.character_name_label.pack(anchor="w")
 
         ctk.CTkLabel(parent, text="🤖 AI Generate", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkLabel(
@@ -329,13 +357,19 @@ class ThumbnailApp(ctk.CTk):
             text="📤  Export PNG",
             height=44,
             font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#7b1fa2",
-            hover_color="#6a1590",
+            fg_color="#a92d6f",
+            hover_color="#8f245e",
             command=self._export,
         ).pack(fill="x", padx=10, pady=4)
 
     def _build_options(self, parent):
         pad = {"padx": 10, "pady": 4}
+
+        ctk.CTkLabel(parent, text="🖼️ Manual Background", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(parent, textvariable=self.bg_path, placeholder_text="Leave blank for random or AI background").pack(
+            fill="x", **pad
+        )
+        ctk.CTkButton(parent, text="Select Background", command=self._select_bg).pack(fill="x", **pad)
 
         ctk.CTkLabel(parent, text="🌐 Guild Font by Language", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkLabel(
@@ -379,13 +413,20 @@ class ThumbnailApp(ctk.CTk):
             command=lambda: self._select_font_var(self.branding_font_path),
         ).pack(fill="x", **pad)
 
-        ctk.CTkLabel(parent, text="📐 Character Scale", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkLabel(parent, text="📐 Character Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.char_x = self._build_number_row(parent, "Character X", "0")
+        self.char_y = self._build_number_row(parent, "Character Y", "0")
         self.char_scale = self._build_number_row(parent, "Scale", "1.0")
+
+        ctk.CTkLabel(parent, text="🌟 Back Effect Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        self.effect_x = self._build_number_row(parent, "Effect X", "0")
+        self.effect_y = self._build_number_row(parent, "Effect Y", "0")
+        self.effect_scale = self._build_number_row(parent, "Effect Scale", "1.0")
 
         ctk.CTkLabel(parent, text="📝 Text Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.date_x = self._build_number_row(parent, "Date X", "100")
         self.date_y = self._build_number_row(parent, "Date Y", "60")
-        self.date_size = self._build_number_row(parent, "Date Size", "70")
+        self.date_size = self._build_number_row(parent, "Date Size", "100")
         self.node_x = self._build_number_row(parent, "Node X", "100")
         self.node_y = self._build_number_row(parent, "Node Y", "300")
         self.node_size = self._build_number_row(parent, "Node Size", "170")
@@ -398,7 +439,7 @@ class ThumbnailApp(ctk.CTk):
         self.guild_line_spacing = self._build_number_row(parent, "Guild Spacing", "10")
         self.branding_x = self._build_number_row(parent, "Branding X", "1320")
         self.branding_y = self._build_number_row(parent, "Branding Y", "980")
-        self.branding_size = self._build_number_row(parent, "Branding Size", "46")
+        self.branding_size = self._build_number_row(parent, "Branding Size", "100")
 
     def _build_number_row(self, parent, label: str, default: str) -> ctk.CTkEntry:
         row = ctk.CTkFrame(parent)
@@ -451,6 +492,91 @@ class ThumbnailApp(ctk.CTk):
             menu.configure(values=current_values)
         self.language_font_paths[key].set(value)
 
+    def _project_path(self, value: str) -> Path:
+        path = Path(value)
+        if path.is_absolute():
+            return path
+        return Path.cwd() / path
+
+    def _update_character_preview(self):
+        if not hasattr(self, "character_preview_label"):
+            return
+
+        value = self.char_path.get().strip()
+        if not value:
+            self._character_preview_image = None
+            self.character_preview_label.configure(image=None, text="No character\nselected")
+            self.character_name_label.configure(text="No character selected")
+            return
+
+        path = self._project_path(value)
+        if not path.exists():
+            self._character_preview_image = None
+            self.character_preview_label.configure(image=None, text="Image not found")
+            self.character_name_label.configure(text=Path(value).name)
+            return
+
+        try:
+            img = Image.open(path).convert("RGBA")
+            img.thumbnail((150, 110), Image.LANCZOS)
+            preview = Image.new("RGBA", (150, 110), (255, 255, 255, 0))
+            offset = ((150 - img.width) // 2, (110 - img.height) // 2)
+            preview.paste(img, offset, img)
+            ctk_img = ctk.CTkImage(light_image=preview, dark_image=preview, size=(150, 110))
+            self._character_preview_image = ctk_img
+            self.character_preview_label.configure(image=ctk_img, text="")
+            self.character_name_label.configure(text=path.name)
+        except Exception:
+            self._character_preview_image = None
+            self.character_preview_label.configure(image=None, text="Preview failed")
+            self.character_name_label.configure(text=path.name)
+
+    def _schedule_preview_refresh(self):
+        if self._preview_image is None:
+            return
+        if hasattr(self, "_live_preview_debounce_id"):
+            self.after_cancel(self._live_preview_debounce_id)
+        self._live_preview_debounce_id = self.after(250, self._refresh_preview_after_text_edit)
+
+    def _bind_live_preview_controls(self):
+        self.char_path.trace_add("write", lambda *_args: self._update_character_preview())
+        for entry in [
+            self.char_x,
+            self.char_y,
+            self.char_scale,
+            self.effect_x,
+            self.effect_y,
+            self.effect_scale,
+        ]:
+            entry.bind("<KeyRelease>", lambda _event: self._schedule_preview_refresh())
+            entry.bind("<FocusOut>", lambda _event: self._schedule_preview_refresh())
+            entry.bind("<Return>", lambda _event: self._schedule_preview_refresh())
+
+    def _check_comfyui_on_startup(self):
+        try:
+            config = ai_image.load_ai_config()
+        except Exception:
+            return
+        if config.get("provider", "comfyui") != "comfyui":
+            return
+
+        self.ai_status.set("Checking ComfyUI...")
+        threading.Thread(target=self._comfyui_startup_worker, args=(config,), daemon=True).start()
+
+    def _comfyui_startup_worker(self, config: dict):
+        try:
+            _ok, message = ai_image.ensure_comfyui_ready(config, start_if_needed=True)
+            self.after(0, self._comfyui_startup_done, message, "")
+        except Exception as e:
+            self.after(0, self._comfyui_startup_done, "", str(e))
+
+    def _comfyui_startup_done(self, message: str, error: str):
+        if error:
+            self.ai_status.set("ComfyUI startup failed.")
+            messagebox.showwarning("ComfyUI Startup", error)
+        else:
+            self.ai_status.set(message)
+
     # ──────────────────────────────────────────
     #  File selection
     # ──────────────────────────────────────────
@@ -461,12 +587,13 @@ class ThumbnailApp(ctk.CTk):
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")],
         )
         if p:
-            self.bg_path.set(p)
+            self.bg_path.set(self._relative_project_path(p))
+            self._schedule_preview_refresh()
 
     def _select_char(self):
         CharacterPickerDialog(
             self,
-            on_select=lambda p: self.char_path.set(self._relative_project_path(p)),
+            on_select=self._set_character_path,
         )
 
     def _select_effect(self):
@@ -476,6 +603,11 @@ class ThumbnailApp(ctk.CTk):
         )
         if p:
             self.effect_path.set(self._relative_project_path(p))
+            self._schedule_preview_refresh()
+
+    def _set_character_path(self, path: str):
+        self.char_path.set(self._relative_project_path(path))
+        self._schedule_preview_refresh()
 
     def _select_font(self):
         self._select_font_var(self.font_path)
@@ -641,12 +773,20 @@ class ThumbnailApp(ctk.CTk):
 
     def _apply_template_to_controls(self):
         self.font_path.set(self.current_template.get("font_path", DEFAULT_COMMON_FONT_PATH))
-        self._set_entry(self.char_scale, self.current_template.get("character", {}).get("scale", 1.0))
+        char_cfg = self.current_template.get("character", {})
+        self._set_entry(self.char_x, char_cfg.get("offset_x", 0))
+        self._set_entry(self.char_y, char_cfg.get("offset_y", 0))
+        self._set_entry(self.char_scale, char_cfg.get("scale", 1.0))
+
+        effect_cfg = self.current_template.get("back_effect", self.current_template.get("effect", {}))
+        self._set_entry(self.effect_x, effect_cfg.get("x", 0))
+        self._set_entry(self.effect_y, effect_cfg.get("y", 0))
+        self._set_entry(self.effect_scale, effect_cfg.get("scale", 1.0))
 
         text_cfg = self.current_template.get("text", {})
         self._set_entry(self.date_x, text_cfg.get("date", {}).get("x", 100))
         self._set_entry(self.date_y, text_cfg.get("date", {}).get("y", 60))
-        self._set_entry(self.date_size, text_cfg.get("date", {}).get("font_size", 70))
+        self._set_entry(self.date_size, text_cfg.get("date", {}).get("font_size", 100))
         self._set_entry(self.node_x, text_cfg.get("node_name", {}).get("x", 100))
         self._set_entry(self.node_y, text_cfg.get("node_name", {}).get("y", 300))
         self._set_entry(self.node_size, text_cfg.get("node_name", {}).get("font_size", 170))
@@ -663,7 +803,7 @@ class ThumbnailApp(ctk.CTk):
         self.branding_font_path.set(branding_cfg.get("font_path", ""))
         self._set_entry(self.branding_x, branding_cfg.get("x", 1320))
         self._set_entry(self.branding_y, branding_cfg.get("y", 980))
-        self._set_entry(self.branding_size, branding_cfg.get("font_size", 46))
+        self._set_entry(self.branding_size, branding_cfg.get("font_size", 100))
 
         language_fonts = self.current_template.get("language_fonts", {})
         for key in self.language_font_paths:
@@ -702,14 +842,26 @@ class ThumbnailApp(ctk.CTk):
             "branding": {"x": self.branding_x, "y": self.branding_y, "size": self.branding_size},
         }
 
-    def _select_text_element(self, key: str | None):
+    def _asset_control_map(self) -> dict:
+        return {
+            "character": {"x": self.char_x, "y": self.char_y, "scale": self.char_scale},
+            "back_effect": {"x": self.effect_x, "y": self.effect_y, "scale": self.effect_scale},
+        }
+
+    def _element_label(self, key: str) -> str:
+        return TEXT_ELEMENT_LABELS.get(key, ASSET_ELEMENT_LABELS.get(key, key))
+
+    def _select_preview_element(self, key: str | None):
         self.selected_text_key = key
         if key:
-            self.selected_text_name.set(f"Selected: {TEXT_ELEMENT_LABELS.get(key, key)}")
+            self.selected_text_name.set(f"Selected: {self._element_label(key)}")
         else:
             self.selected_text_name.set("Selected: none")
         if hasattr(self, "preview"):
             self.preview.set_selected(key)
+
+    def _select_text_element(self, key: str | None):
+        self._select_preview_element(key)
 
     def _move_text_element(self, key: str, dx: int, dy: int, refresh: bool = True):
         controls = self._text_control_map().get(key)
@@ -720,6 +872,21 @@ class ThumbnailApp(ctk.CTk):
         if refresh:
             self._refresh_preview_after_text_edit()
 
+    def _move_asset_element(self, key: str, dx: int, dy: int, refresh: bool = True):
+        controls = self._asset_control_map().get(key)
+        if not controls:
+            return
+        self._set_entry(controls["x"], self._int_value(controls["x"], 0) + dx)
+        self._set_entry(controls["y"], self._int_value(controls["y"], 0) + dy)
+        if refresh:
+            self._refresh_preview_after_text_edit()
+
+    def _move_preview_element(self, key: str, dx: int, dy: int, refresh: bool = True):
+        if key in self._text_control_map():
+            self._move_text_element(key, dx, dy, refresh=refresh)
+        elif key in self._asset_control_map():
+            self._move_asset_element(key, dx, dy, refresh=refresh)
+
     def _resize_text_element(self, key: str, delta: int):
         controls = self._text_control_map().get(key)
         if not controls:
@@ -728,16 +895,42 @@ class ThumbnailApp(ctk.CTk):
         self._set_entry(controls["size"], max(1, current + delta))
         self._refresh_preview_after_text_edit()
 
-    def _drag_text_element(self, key: str, dx: int, dy: int):
-        self._select_text_element(key)
-        self._move_text_element(key, dx, dy, refresh=False)
+    def _resize_asset_element(self, key: str, delta: int):
+        controls = self._asset_control_map().get(key)
+        if not controls:
+            return
+        current = self._float_value(controls["scale"], 1.0)
+        self._set_entry(controls["scale"], f"{max(0.05, current + (delta * 0.02)):.2f}")
+        self._refresh_preview_after_text_edit()
+
+    def _resize_preview_element(self, key: str, delta: int):
+        if key in self._text_control_map():
+            self._resize_text_element(key, delta)
+        elif key in self._asset_control_map():
+            self._resize_asset_element(key, delta)
+
+    def _move_preview_bbox(self, key: str, dx: int, dy: int):
         for element in self._preview_text_elements:
             if element["key"] == key:
                 x1, y1, x2, y2 = element["bbox"]
                 element["bbox"] = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
                 break
+        for element in self._preview_asset_elements:
+            if element["key"] == key:
+                x1, y1, x2, y2 = element["bbox"]
+                element["bbox"] = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+                break
         self.preview.set_text_elements(self._preview_text_elements)
+        self.preview.set_asset_elements(self._preview_asset_elements)
         self.preview.set_selected(key)
+
+    def _drag_preview_element(self, key: str, dx: int, dy: int):
+        self._select_preview_element(key)
+        self._move_preview_element(key, dx, dy, refresh=False)
+        self._move_preview_bbox(key, dx, dy)
+
+    def _drag_text_element(self, key: str, dx: int, dy: int):
+        self._drag_preview_element(key, dx, dy)
 
     def _on_key_press(self, event):
         if not self.selected_text_key:
@@ -749,7 +942,7 @@ class ThumbnailApp(ctk.CTk):
         is_shift = bool(event.state & 0x0001)
         is_ctrl = bool(event.state & 0x0004)
         if is_ctrl and key_name in {"Up", "Down"}:
-            self._resize_text_element(self.selected_text_key, 1 if key_name == "Up" else -1)
+            self._resize_preview_element(self.selected_text_key, 1 if key_name == "Up" else -1)
             return "break"
 
         step = 10 if is_shift else 1
@@ -764,14 +957,8 @@ class ThumbnailApp(ctk.CTk):
         elif key_name == "Right":
             dx = step
 
-        self._move_text_element(self.selected_text_key, dx, dy, refresh=False)
-        for element in self._preview_text_elements:
-            if element["key"] == self.selected_text_key:
-                x1, y1, x2, y2 = element["bbox"]
-                element["bbox"] = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
-                break
-        self.preview.set_text_elements(self._preview_text_elements)
-        self.preview.set_selected(self.selected_text_key)
+        self._move_preview_element(self.selected_text_key, dx, dy, refresh=False)
+        self._move_preview_bbox(self.selected_text_key, dx, dy)
 
         if hasattr(self, "_key_debounce_id"):
             self.after_cancel(self._key_debounce_id)
@@ -791,7 +978,7 @@ class ThumbnailApp(ctk.CTk):
             {
                 "x": self._int_value(self.date_x, 100),
                 "y": self._int_value(self.date_y, 60),
-                "font_size": self._int_value(self.date_size, 70),
+                "font_size": self._int_value(self.date_size, 100),
             }
         )
         text_cfg.setdefault("node_name", {}).update(
@@ -821,9 +1008,16 @@ class ThumbnailApp(ctk.CTk):
         template.setdefault("character", {}).update(
             {
                 "position": "right",
-                "offset_x": 0,
-                "offset_y": 0,
+                "offset_x": self._int_value(self.char_x, 0),
+                "offset_y": self._int_value(self.char_y, 0),
                 "scale": self._float_value(self.char_scale, 1.0),
+            }
+        )
+        template.setdefault("back_effect", {}).update(
+            {
+                "x": self._int_value(self.effect_x, 0),
+                "y": self._int_value(self.effect_y, 0),
+                "scale": self._float_value(self.effect_scale, 1.0),
             }
         )
         template.setdefault("branding", {}).update(
@@ -833,7 +1027,7 @@ class ThumbnailApp(ctk.CTk):
                 "font_path": self.branding_font_path.get().strip(),
                 "x": self._int_value(self.branding_x, 1320),
                 "y": self._int_value(self.branding_y, 980),
-                "font_size": self._int_value(self.branding_size, 46),
+                "font_size": self._int_value(self.branding_size, 100),
             }
         )
 
@@ -874,6 +1068,11 @@ class ThumbnailApp(ctk.CTk):
             img = compose_thumbnail(**params)
             self._preview_image = img
             self.preview.show(img)
+            asset_elements = build_asset_element_bounds(
+                params["char_path"],
+                params["effect_path"],
+                params["template"],
+            )
             elements = build_text_element_bounds(
                 params["date_str"],
                 params["node_name"],
@@ -883,7 +1082,9 @@ class ThumbnailApp(ctk.CTk):
                 guild_font_paths=params["guild_font_paths"],
                 language_font_paths=params["language_font_paths"],
             )
+            self._preview_asset_elements = asset_elements
             self._preview_text_elements = elements
+            self.preview.set_asset_elements(asset_elements)
             self.preview.set_text_elements(elements)
             self.preview.set_selected(self.selected_text_key)
         except Exception as e:

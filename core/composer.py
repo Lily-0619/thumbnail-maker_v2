@@ -138,6 +138,29 @@ def place_effect(
     return canvas
 
 
+def effect_bounds(
+    effect_path: str,
+    opacity: float = 0.85,
+    x: int = 0,
+    y: int = 0,
+    scale: float = 1.0,
+    canvas_w: int = 1920,
+    canvas_h: int = 1080,
+) -> tuple[int, int, int, int] | None:
+    """後方エフェクトの配置矩形を1920x1080基準で返す。"""
+    if load_image_rgba(effect_path) is None:
+        return None
+
+    effect_scale = max(float(scale), 0.01)
+    width = max(int(canvas_w * effect_scale), 1)
+    height = max(int(canvas_h * effect_scale), 1)
+    base_x = (canvas_w - width) // 2
+    base_y = (canvas_h - height) // 2
+    x1 = base_x + int(x)
+    y1 = base_y + int(y)
+    return (x1, y1, x1 + width, y1 + height)
+
+
 def place_character(
     canvas: Image.Image,
     char_path: str,
@@ -177,6 +200,76 @@ def place_character(
     tmp.paste(char, (x, y), char)
     canvas = Image.alpha_composite(canvas, tmp)
     return canvas
+
+
+def character_bounds(
+    char_path: str,
+    position: str = "right",
+    scale: float = 1.0,
+    offset_x: int = 0,
+    offset_y: int = 0,
+    canvas_w: int = 1920,
+    canvas_h: int = 1080,
+) -> tuple[int, int, int, int] | None:
+    """キャラクターの配置矩形を1920x1080基準で返す。"""
+    char = load_image_rgba(char_path)
+    if char is None:
+        return None
+
+    target_h = max(int(canvas_h * float(scale)), 1)
+    ratio = target_h / char.height
+    target_w = max(int(char.width * ratio), 1)
+
+    if position == "right":
+        x = canvas_w - target_w - 80 + int(offset_x)
+    elif position == "left":
+        x = 80 + int(offset_x)
+    else:
+        x = (canvas_w - target_w) // 2 + int(offset_x)
+
+    y = canvas_h - target_h + int(offset_y)
+    return (x, y, x + target_w, y + target_h)
+
+
+def build_asset_element_bounds(
+    char_path: str,
+    effect_path: str,
+    template: dict,
+    canvas_w: int = 1920,
+    canvas_h: int = 1080,
+) -> list[dict]:
+    """プレビュー上で選択・ドラッグできる画像素材の矩形一覧を返す。"""
+    elements = []
+
+    if effect_path:
+        effect_cfg = template.get("back_effect", template.get("effect", {}))
+        bbox = effect_bounds(
+            effect_path,
+            opacity=effect_cfg.get("opacity", 0.85),
+            x=effect_cfg.get("x", 0),
+            y=effect_cfg.get("y", 0),
+            scale=effect_cfg.get("scale", 1.0),
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+        )
+        if bbox:
+            elements.append({"key": "back_effect", "label": "Back Effect", "bbox": bbox})
+
+    if char_path:
+        char_cfg = template.get("character", {})
+        bbox = character_bounds(
+            char_path,
+            position=char_cfg.get("position", "right"),
+            scale=char_cfg.get("scale", 1.0),
+            offset_x=char_cfg.get("offset_x", 0),
+            offset_y=char_cfg.get("offset_y", 0),
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+        )
+        if bbox:
+            elements.append({"key": "character", "label": "Character", "bbox": bbox})
+
+    return elements
 
 
 # ──────────────────────────────────────────
@@ -242,10 +335,10 @@ def compose_thumbnail(
         canvas = place_character(
             canvas,
             char_path,
-            position="right",
+            position=char_cfg.get("position", "right"),
             scale=char_cfg.get("scale", 1.0),
-            offset_x=0,
-            offset_y=0,
+            offset_x=char_cfg.get("offset_x", 0),
+            offset_y=char_cfg.get("offset_y", 0),
         )
 
     canvas = render_all_text(
