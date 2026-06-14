@@ -21,9 +21,16 @@ sdist/
 var/
 wheels/
 *.egg-info/
+font/
+material/
+outputs/
+.venv/
+__pycache__/
 .installed.cfg
 *.egg
 MANIFEST
+
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -103,9 +110,18 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+<<<<<<< Updated upstream
 # thumbnail-maker local/runtime assets
 font/
 material/
 outputs/
 .venv/
 **/__pycache__/
+=======
+# Local materials
+material/
+
+# Local fonts
+font/
+
+>>>>>>> Stashed changes
