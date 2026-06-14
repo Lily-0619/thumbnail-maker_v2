@@ -110,22 +110,20 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-<<<<<<< Updated upstream
 # thumbnail-maker local/runtime assets
 font/
 material/
 outputs/
 .venv/
 **/__pycache__/
-=======
-# Local materials
-material/
-
-# Local fonts
-font/
-
->>>>>>> Stashed changes
 
 # AI generated images
 assets/backgrounds/ai/*.png
 assets/effects/ai/*.png
+
+# Local AI model/runtime files
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+ComfyUI*/

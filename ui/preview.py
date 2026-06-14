@@ -10,17 +10,18 @@ from PIL import Image, ImageTk
 
 
 class PreviewPanel(ctk.CTkFrame):
-    """合成済み画像をリサイズしてUIに表示し、文字要素のクリック/ドラッグを扱うパネル。"""
+    """合成済み画像をリサイズしてUIに表示し、プレビュー要素のクリック/ドラッグを扱うパネル。"""
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
-        self._canvas = tk.Canvas(self, highlightthickness=0, bg="#1f1f1f", cursor="arrow")
+        self._canvas = tk.Canvas(self, highlightthickness=0, bg="#f6e1ea", cursor="arrow")
         self._canvas.pack(expand=True, fill="both", padx=20, pady=20)
         self._current_pil = None
         self._photo = None
         self._image_item = None
         self._display = {"x": 0, "y": 0, "w": 0, "h": 0, "ratio": 1.0}
         self._text_elements = []
+        self._asset_elements = []
         self._selected_key = None
         self._select_callback = None
         self._drag_callback = None
@@ -54,8 +55,13 @@ class PreviewPanel(ctk.CTkFrame):
         self._text_elements = elements or []
         self._draw_selection()
 
+    def set_asset_elements(self, elements):
+        """1920x1080基準の画像素材矩形をプレビューへ渡す。"""
+        self._asset_elements = elements or []
+        self._draw_selection()
+
     def set_selected(self, key: str | None):
-        """選択中の文字要素キーを更新し、プレビュー上に枠を描く。"""
+        """選択中の要素キーを更新し、プレビュー上に枠を描く。"""
         self._selected_key = key
         self._draw_selection()
 
@@ -113,8 +119,11 @@ class PreviewPanel(ctk.CTkFrame):
         ratio = self._display.get("ratio") or 1.0
         return int(round(dx / ratio)), int(round(dy / ratio))
 
+    def _interactive_elements(self) -> list[dict]:
+        return [*self._asset_elements, *self._text_elements]
+
     def _hit_test(self, image_x: int, image_y: int) -> str | None:
-        for element in reversed(self._text_elements):
+        for element in reversed(self._interactive_elements()):
             x1, y1, x2, y2 = element["bbox"]
             if x1 <= image_x <= x2 and y1 <= image_y <= y2:
                 return element["key"]
@@ -156,7 +165,10 @@ class PreviewPanel(ctk.CTkFrame):
             return
         display = self._display
         ratio = display.get("ratio") or 1.0
-        selected = next((element for element in self._text_elements if element["key"] == self._selected_key), None)
+        selected = next(
+            (element for element in self._interactive_elements() if element["key"] == self._selected_key),
+            None,
+        )
         if not selected:
             return
         x1, y1, x2, y2 = selected["bbox"]

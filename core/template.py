@@ -48,7 +48,7 @@ def get_default_template() -> dict:
             "date": {
                 "x": 100,
                 "y": 60,
-                "font_size": 70,
+                "font_size": 100,
                 "color": "#F5F5F5",
                 "stroke_color": "#000000",
                 "stroke_width": 4,
@@ -99,6 +99,9 @@ def get_default_template() -> dict:
         "back_effect": {
             "type": "ai_generated_with_background",
             "opacity": 0.85,
+            "x": 0,
+            "y": 0,
+            "scale": 1.0,
         },
         "foreground_effect": {"enabled": False},
         "branding": {
@@ -108,7 +111,7 @@ def get_default_template() -> dict:
             "font_path": "",
             "x": 1320,
             "y": 980,
-            "font_size": 46,
+            "font_size": 100,
             "color": "#F4F4F4",
             "stroke_color": "#000000",
             "stroke_width": 3,
