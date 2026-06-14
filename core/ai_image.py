@@ -6,7 +6,8 @@ AI画像生成モジュール。
 後方エフェクト(キャラに合わせた透過エフェクト)をAIで生成する。
 
 対応プロバイダー:
-  - sdwebui  : ローカルのStable Diffusion WebUI(AUTOMATIC1111)。標準設定。
+  - comfyui  : ローカルのComfyUI。標準設定。APIキー不要・無料・全てローカルで動く。
+  - sdwebui  : ローカルのStable Diffusion WebUI(AUTOMATIC1111)。
                APIキー不要・無料・全てローカルで動く。
   - stability: Stability AI(クラウドAPI。使う場合のみAPIキーが必要)
   - openai   : OpenAI gpt-image-1(クラウドAPI。現在は未使用)
@@ -26,8 +27,10 @@ import base64
 import io
 import json
 import os
+import random
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -312,6 +315,193 @@ def _generate_sdwebui(
 
 
 # ──────────────────────────────────────────
+#  ComfyUI(ローカル・標準)
+# ──────────────────────────────────────────
+
+
+def _round8(value: int) -> int:
+    """SDが扱いやすいよう8の倍数に丸める(最低64)。"""
+    return max(64, int(round(value / 8)) * 8)
+
+
+def _comfyui_pick_checkpoint(url: str, cfg: dict, timeout: int) -> str:
+    """使用するモデル(checkpoint)名を決める。
+
+    config の ckpt_name が指定されていればそれを使う。空ならComfyUIに
+    問い合わせて最初に見つかったモデルを自動採用する。
+    """
+    name = (cfg.get("ckpt_name") or "").strip()
+    if name:
+        return name
+    try:
+        resp = requests.get(f"{url}/object_info/CheckpointLoaderSimple", timeout=timeout)
+        resp.raise_for_status()
+        info = resp.json()
+        choices = info["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+    except Exception:
+        choices = []
+    if not choices:
+        raise AIImageError(
+            "ComfyUIにモデル(checkpoint)が見つかりません。\n"
+            "ComfyUIの models/checkpoints フォルダに .safetensors のモデルを置いてください。\n"
+            "(例: Civitai から DreamShaper などをダウンロード)"
+        )
+    return choices[0]
+
+
+def _comfyui_upload_image(url: str, image_path: Path, timeout: int) -> str:
+    """参考画像をComfyUIのinputにアップロードし、LoadImage用のファイル名を返す。"""
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(
+        image_path.suffix.lower(), "image/png"
+    )
+    with open(image_path, "rb") as f:
+        files = {"image": (image_path.name, f.read(), mime)}
+    resp = requests.post(f"{url}/upload/image", files=files, data={"overwrite": "true"}, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    name = data.get("name", image_path.name)
+    subfolder = data.get("subfolder", "")
+    return f"{subfolder}/{name}" if subfolder else name
+
+
+def _comfyui_build_workflow(
+    prompt: str,
+    negative: str,
+    cfg: dict,
+    ckpt_name: str,
+    width: int,
+    height: int,
+    init_image_name: str | None,
+) -> dict:
+    """ComfyUIのAPI形式ワークフロー(ノードグラフ)を組み立てる。
+
+    init_image_name が指定された場合は img2img(LoadImage→VAEEncode)、
+    それ以外は txt2img(EmptyLatentImage)になる。
+    """
+    seed = random.randint(0, 2**63 - 1)
+    workflow = {
+        "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["4", 1]}},
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": seed,
+                "steps": cfg.get("steps", 28),
+                "cfg": cfg.get("cfg_scale", 7),
+                "sampler_name": cfg.get("sampler_name", "euler"),
+                "scheduler": cfg.get("scheduler", "normal"),
+                "denoise": 1.0,
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            },
+        },
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bdm", "images": ["8", 0]}},
+    }
+    if init_image_name is not None:
+        # img2img: 参考画像を読み込んで潜在空間にエンコードし、denoiseで変化量を決める
+        workflow["10"] = {"class_type": "LoadImage", "inputs": {"image": init_image_name}}
+        workflow["11"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["10", 0], "vae": ["4", 2]}}
+        workflow["3"]["inputs"]["latent_image"] = ["11", 0]
+        workflow["3"]["inputs"]["denoise"] = cfg.get("denoising_strength", 0.7)
+    else:
+        workflow["5"] = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        }
+    return workflow
+
+
+def _generate_comfyui(
+    prompt: str,
+    negative: str,
+    config: dict,
+    init_image: Path | None = None,
+) -> Image.Image:
+    """ローカルのComfyUIで画像を生成する。
+
+    init_image を渡すと img2img になり、サンプル画像の雰囲気に寄せて生成する。
+    """
+    cfg = config.get("comfyui", {})
+    url = cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
+    timeout = config.get("timeout_seconds", 300)
+    width = _round8(cfg.get("width", 768))
+    height = _round8(cfg.get("height", 432))
+
+    # 接続確認(分かりやすいエラーにするため最初に叩く)
+    try:
+        requests.get(f"{url}/system_stats", timeout=10)
+    except requests.exceptions.RequestException:
+        raise AIImageError(
+            f"ローカルのComfyUIに接続できません({url})。\n"
+            "ComfyUIを起動しているか確認してください(通常は http://127.0.0.1:8188 )。\n"
+            "別ポートで動かしている場合は config/ai_config.json の comfyui.url を合わせてください。"
+        )
+
+    ckpt_name = _comfyui_pick_checkpoint(url, cfg, timeout)
+
+    init_name = None
+    if init_image is not None:
+        try:
+            init_name = _comfyui_upload_image(url, init_image, timeout)
+        except Exception as e:
+            raise AIImageError(f"参考画像のアップロードに失敗しました: {e}")
+
+    workflow = _comfyui_build_workflow(prompt, negative, cfg, ckpt_name, width, height, init_name)
+    client_id = f"bdm-{random.randint(0, 1_000_000)}"
+
+    try:
+        resp = requests.post(f"{url}/prompt", json={"prompt": workflow, "client_id": client_id}, timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        raise AIImageError(f"ComfyUIへの生成リクエストに失敗しました: {e}")
+    if resp.status_code != 200:
+        raise AIImageError(f"ComfyUIエラー (HTTP {resp.status_code}):\n{resp.text[:500]}")
+    prompt_id = resp.json().get("prompt_id")
+    if not prompt_id:
+        raise AIImageError(f"ComfyUIが生成IDを返しませんでした:\n{resp.text[:500]}")
+
+    # 生成完了までポーリング(historyに結果が入るまで待つ)
+    image_info = None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            h = requests.get(f"{url}/history/{prompt_id}", timeout=30)
+        except requests.exceptions.RequestException:
+            time.sleep(1.0)
+            continue
+        if h.status_code == 200:
+            data = h.json().get(prompt_id)
+            if data:
+                outputs = data.get("outputs", {})
+                for node_out in outputs.values():
+                    images = node_out.get("images")
+                    if images:
+                        image_info = images[0]
+                        break
+                if image_info is not None:
+                    break
+                status = data.get("status", {})
+                if status.get("status_str") == "error":
+                    raise AIImageError(f"ComfyUIの生成中にエラーが発生しました:\n{json.dumps(status)[:500]}")
+        time.sleep(1.0)
+
+    if image_info is None:
+        raise AIImageError("ComfyUIの生成がタイムアウトしました。stepsや解像度を下げるか、timeout_secondsを増やしてください。")
+
+    params = {
+        "filename": image_info["filename"],
+        "subfolder": image_info.get("subfolder", ""),
+        "type": image_info.get("type", "output"),
+    }
+    img_resp = requests.get(f"{url}/view", params=params, timeout=timeout)
+    img_resp.raise_for_status()
+    return Image.open(io.BytesIO(img_resp.content))
+
+
+# ──────────────────────────────────────────
 #  画像加工ユーティリティ
 # ──────────────────────────────────────────
 
@@ -362,17 +552,19 @@ def generate_background(node_name: str) -> Path:
         raise AIImageError("拠点名が空です。先に拠点名を入力してください。")
 
     config = load_ai_config()
-    provider = config.get("provider", "sdwebui")
+    provider = config.get("provider", "comfyui")
     prompt, negative = build_background_prompt(node_name)
 
-    if provider == "sdwebui":
+    if provider == "comfyui":
+        img = _generate_comfyui(prompt, negative, config)
+    elif provider == "sdwebui":
         img = _generate_sdwebui(prompt, negative, config)
     elif provider == "stability":
         img = _generate_stability(prompt, negative, config)
     elif provider == "openai":
         img = _generate_openai(prompt, config)
     else:
-        raise AIImageError(f"不明なprovider設定です: {provider} (sdwebui / stability / openai のいずれか)")
+        raise AIImageError(f"不明なprovider設定です: {provider} (comfyui / sdwebui / stability / openai のいずれか)")
 
     out_dir = PROJECT_ROOT / config.get("background_output_dir", "assets/backgrounds/ai")
     return _save_image(img.convert("RGB"), out_dir, f"bg_{_safe_slug(node_name)}")
@@ -392,10 +584,14 @@ def generate_effect(effect_type: str) -> Path:
         raise AIImageError("エフェクト種類が空です。")
 
     config = load_ai_config()
-    provider = config.get("provider", "sdwebui")
+    provider = config.get("provider", "comfyui")
     prompt, negative = build_effect_prompt(effect_type)
 
-    if provider == "sdwebui":
+    if provider == "comfyui":
+        reference = find_reference_image(effect_type, config)
+        img = _generate_comfyui(prompt + ", pure black background", negative, config, init_image=reference)
+        img = _black_to_alpha(img)
+    elif provider == "sdwebui":
         reference = find_reference_image(effect_type, config)
         img = _generate_sdwebui(prompt + ", pure black background", negative, config, init_image=reference)
         img = _black_to_alpha(img)
@@ -408,7 +604,7 @@ def generate_effect(effect_type: str) -> Path:
             # 万一透過になっていない場合は黒→透過変換でフォールバック
             img = _black_to_alpha(img)
     else:
-        raise AIImageError(f"不明なprovider設定です: {provider} (sdwebui / stability / openai のいずれか)")
+        raise AIImageError(f"不明なprovider設定です: {provider} (comfyui / sdwebui / stability / openai のいずれか)")
 
     out_dir = PROJECT_ROOT / config.get("effect_output_dir", "assets/effects/ai")
     return _save_image(img.convert("RGBA"), out_dir, f"effect_{_safe_slug(effect_type)}")
@@ -418,13 +614,27 @@ def check_setup() -> str:
     """セットアップ状態を確認して結果メッセージを返す(課金は発生しない)。"""
     lines = []
     config = load_ai_config()
-    provider = config.get("provider", "sdwebui")
+    provider = config.get("provider", "comfyui")
     lines.append(f"・provider 設定           : {provider}")
     lines.append("・config/ai_config.json   : OK")
     load_ai_prompts()
     lines.append("・config/ai_prompts.json  : OK")
 
-    if provider in ("openai", "stability"):
+    if provider == "comfyui":
+        cfg = config.get("comfyui", {})
+        url = cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
+        try:
+            requests.get(f"{url}/system_stats", timeout=5)
+            lines.append(f"・ComfyUI接続({url}) : OK")
+        except Exception:
+            lines.append(f"・ComfyUI接続({url}) : NG(ComfyUIを起動してください)")
+        else:
+            try:
+                ckpt = _comfyui_pick_checkpoint(url, cfg, 15)
+                lines.append(f"・モデル(checkpoint)      : OK({ckpt})")
+            except AIImageError as e:
+                lines.append(f"・モデル(checkpoint)      : NG → {e}")
+    elif provider in ("openai", "stability"):
         try:
             get_api_key(provider)
             lines.append("・APIキー(.env)           : OK(設定されています)")

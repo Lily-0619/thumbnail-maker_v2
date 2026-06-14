@@ -1,10 +1,12 @@
-# AI画像生成 やり方説明書(初心者向け・全部ローカルで動く版)
+# AI画像生成 やり方説明書(初心者向け・全部ローカルで動く版 / ComfyUI)
 
 サムネイルの「**背景**」と「**キャラの後方エフェクト**」をAIで自動生成できるようになりました。
 
 - **APIキー不要・登録不要・料金は一切かかりません**(全部あなたのPCの中で動きます)
-- 使うのは無料ソフト「**Stable Diffusion WebUI(AUTOMATIC1111)**」です
+- 使うのは無料ソフト「**ComfyUI**」です(あなたのPCにはすでに `E:\AI\ComfyUI-master` がありますが、後述のとおり起動できる状態に整える必要があります)
 - この説明書は、プログラミングがわからなくても進められるように書いています。上から順番にやれば大丈夫です
+
+> あなたのPCは **NVIDIA GeForce RTX 3060 Ti(VRAM 8GB)** なので、生成はサクサク動きます👍
 
 ---
 
@@ -20,7 +22,7 @@
   - エフェクト: `assets/effects/ai/`
 
 ```
-[Stable Diffusion WebUI を起動しておく(ローカル)]
+[ComfyUI を起動しておく(ローカル / http://127.0.0.1:8188)]
                  ↑ ここにアプリが自動でお願いしに行く
 [拠点名を入力] ──→ [✨ Generate BG + Effect ボタン] ──→ AIが2枚同時に生成
                                                           │
@@ -32,13 +34,12 @@
 
 ---
 
-## 2. 必要なPCスペック
+## 2. 必要なPCスペック(あなたのPCはOKです)
 
-| 項目 | 目安 |
-|---|---|
-| グラフィックボード(GPU) | **NVIDIA製を推奨**。VRAM 4GB以上で動作、8GB以上で快適 |
-| 空きディスク容量 | 15GB以上(本体+AIモデル) |
-| GPUがない場合 | CPUだけでも動きますが、1枚に数分〜十数分かかります |
+| 項目 | 目安 | あなたのPC |
+|---|---|---|
+| グラフィックボード(GPU) | NVIDIA製・VRAM 4GB以上で動作、8GB以上で快適 | RTX 3060 Ti 8GB ✅ |
+| 空きディスク容量 | 10GB以上(本体+AIモデル) | 要確認 |
 
 ---
 
@@ -46,87 +47,77 @@
 
 | いつ | やること | かかる時間 |
 |---|---|---|
-| 最初に1回だけ | ① Stable Diffusion WebUI をインストール | 30分〜1時間(ほぼ待ち時間) |
-| 最初に1回だけ | ② 起動設定に `--api` を追加 | 2分 |
-| 最初に1回だけ | ③ (おすすめ)ダークファンタジー向きのモデルを入れる | 15分 |
-| 最初に1回だけ | ④ 動作確認コマンドを1回実行 | 1分 |
-| 任意 | ⑤ エフェクトの見本画像を `material/サンプル/` に置く | 数分 |
-| **毎回** | **WebUIを起動してから**、アプリで拠点名を入れてボタンを押す | 数秒の操作 |
+| 最初に1回だけ | ① ComfyUI(起動できる版)を用意する | 15〜30分(ほぼDL待ち) |
+| 最初に1回だけ | ② ダークファンタジー向きのモデルを入れる | 15分(DL待ち) |
+| 最初に1回だけ | ③ ComfyUIを起動して動作確認 | 5分 |
+| 任意 | ④ エフェクトの見本画像を `material/サンプル/` に置く | 数分 |
+| **毎回** | **ComfyUIを起動してから**、アプリで拠点名を入れてボタンを押す | 数秒の操作 |
+
+> アプリ側のプログラムは**すでに完成しています**。あなたがやるのは「ComfyUIを動く状態にして起動しておく」ことだけです。
 
 ---
 
-## 4. 手順① Stable Diffusion WebUI をインストールする
+## 4. 手順① ComfyUI(起動できる版)を用意する
 
-1. ブラウザでこのアドレスを開いてZIPをダウンロード:
-   https://github.com/AUTOMATIC1111/stable-diffusion-webui/releases/download/v1.0.0-pre/sd.webui.zip
-2. ダウンロードした `sd.webui.zip` を**右クリック→すべて展開**する
-   - ⚠️ 展開先は**日本語やスペースを含まない場所**にしてください(例: `D:\sd.webui`)
-3. 展開したフォルダの中の **`update.bat`** をダブルクリック
-   - 黒い画面が出て最新版への更新が始まります。終わったら何かキーを押して閉じる
-   - 「WindowsによってPCが保護されました」と出たら「詳細情報」→「実行」
-4. 続けて **`run.bat`** をダブルクリック
-   - **初回は必要なファイル(数GB)を自動ダウンロードするので、かなり時間がかかります。気長に待ってください**
-   - AIモデルを持っていない場合は標準モデル(Stable Diffusion 1.5)も自動で入ります
-5. 自動でブラウザに `http://127.0.0.1:7860` という画面が開いたらインストール成功です
-6. いったん黒い画面を閉じて(×ボタンでOK)、次の手順へ
+いまPCにある `E:\AI\ComfyUI-master` は「プログラムを置いただけ」で、**そのままでは起動できません**(起動用の部品とAIモデルが入っていない状態です)。初心者の方は、起動ボタン付きの**公式ポータブル版**を入れるのが一番カンタンで確実です。
 
----
+1. ブラウザで ComfyUI 公式の配布ページを開く:
+   https://github.com/comfyanonymous/ComfyUI/releases
+2. 一番上(最新)の **Assets** を開き、**`ComfyUI_windows_portable_nvidia.7z`**(NVIDIA用)をダウンロード
+   - 数GBあります。ダウンロードに時間がかかります
+3. ダウンロードした `.7z` ファイルを展開する
+   - `.7z` は標準のWindowsでは開けないことがあります。開けない場合は無料ソフト **7-Zip**( https://7-zip.org/ )を入れてから右クリック→「7-Zip」→「ここに展開」
+   - ⚠️ 展開先は**日本語やスペースを含まない場所**にしてください(例: `E:\AI\ComfyUI_windows_portable`)
+4. 展開すると中に **`run_nvidia_gpu.bat`** というファイルがあります(これが起動ボタンです)
 
-## 5. 手順② 起動設定に `--api` を追加する
-
-サムネイルアプリがWebUIと会話できるようにするスイッチです。**これを忘れると連携できません。**
-
-1. `sd.webui\webui\` フォルダの中の **`webui-user.bat`** を右クリック → 「メモ帳で編集」(または「編集」)
-2. `set COMMANDLINE_ARGS=` と書かれた行を探して、こう書き換える:
-
-   ```bat
-   set COMMANDLINE_ARGS=--api
-   ```
-
-   - GPUのVRAMが4〜6GBなら、こうするとメモリ不足エラーが出にくくなります:
-
-   ```bat
-   set COMMANDLINE_ARGS=--api --medvram
-   ```
-
-3. 上書き保存して閉じる
+> 💡 すでにComfyUIを自分で起動できる方は、この手順①は飛ばして、いまの `E:\AI\ComfyUI-master` をそのまま使ってOKです(その場合は手順②でモデルだけ入れてください)。ポート番号を変えている場合だけ、`config/ai_config.json` の `comfyui.url` を合わせてください(標準は `http://127.0.0.1:8188`)。
 
 ---
 
-## 6. 手順③ (おすすめ)ダークファンタジー向きのモデルを入れる
+## 5. 手順② ダークファンタジー向きのモデルを入れる
 
-標準モデルでも動きますが、**モデルを変えると絵のクオリティが大きく上がります。**
+ComfyUIは**AIモデル(checkpoint)が無いと画像を1枚も作れません。** 1個だけ入れればOKです。
 
 1. 無料サイト Civitai( https://civitai.com/ )で好みのモデルを探す(無料登録が必要な場合あり)
    - 初心者へのおすすめ: 「**DreamShaper**」(リアル寄りファンタジーが得意で軽い)
    - 検索して、`.safetensors` 形式のファイルをダウンロード
-2. ダウンロードしたファイルを次のフォルダに入れる:
+2. ダウンロードしたファイルを、ComfyUIの次のフォルダに入れる:
    ```
-   sd.webui\webui\models\Stable-diffusion\
+   （ポータブル版の場合）ComfyUI_windows_portable\ComfyUI\models\checkpoints\
+   （E:\AI\ComfyUI-master を使う場合) E:\AI\ComfyUI-master\models\checkpoints\
    ```
-3. `run.bat` でWebUIを起動し、画面**左上の「Stable Diffusion checkpoint」**欄で入れたモデルを選ぶ
-   - 一度選べば次回からもそのモデルが使われます
+3. これだけでOKです。どのモデルを使うかはアプリが自動で見つけます。
+   - 複数入れて特定の1個を指定したいときは、`config/ai_config.json` の `comfyui.ckpt_name` にファイル名(例 `dreamshaper_8.safetensors`)を書きます。空のままなら自動で最初の1個を使います。
 
-> 💡 「SDXL」と書かれたモデルは高画質ですがVRAM 8GB以上推奨です。使う場合は
-> `config/ai_config.json` の `"width": 960, "height": 540` を `1344` と `768` に上げると効果的です。
+> 💡 「SDXL」と書かれたモデルは高画質ですが少し重いです。使う場合は
+> `config/ai_config.json` の `comfyui` の `"width": 768, "height": 432` を `1344` と `768` に上げると効果的です(8GB VRAMなら動きます)。
 
 ---
 
-## 7. 手順④ 動作確認
+## 6. 手順③ ComfyUIを起動して動作確認
 
-1. **WebUIを起動しておく**(`run.bat` をダブルクリックして、ブラウザ画面が開くまで待つ)
-2. コマンドプロンプトで以下を実行(サムネイルアプリのフォルダで):
+1. **ComfyUIを起動する**
+   - ポータブル版なら **`run_nvidia_gpu.bat`** をダブルクリック
+   - 黒い画面が出て、最後に `To see the GUI go to: http://127.0.0.1:8188` のような表示が出れば起動成功です
+   - **この黒い画面は閉じないでください**(閉じると連携が切れます)
+2. サムネイルアプリのフォルダで、コマンドプロンプト(またはPowerShell)から動作確認:
 
-```bat
-cd /d D:\bdm-thumbnail_app_v02
+```
+cd /d E:\bdm-thumbnail_app_v02
 .\.venv\Scripts\python.exe -m core.ai_image check
 ```
 
-「WebUI接続(http://127.0.0.1:7860) : OK」と出れば準備完了です。
+次のように全部OKになっていれば準備完了です:
+
+```
+・provider 設定           : comfyui
+・ComfyUI接続(http://127.0.0.1:8188) : OK
+・モデル(checkpoint)      : OK(あなたのモデル名)
+```
 
 試しに1枚生成してみる場合(無料です):
 
-```bat
+```
 .\.venv\Scripts\python.exe -m core.ai_image bg "Ehwaz Hill"
 .\.venv\Scripts\python.exe -m core.ai_image effect fire
 ```
@@ -135,9 +126,9 @@ cd /d D:\bdm-thumbnail_app_v02
 
 ---
 
-## 8. 普段の使い方(アプリ)
+## 7. 普段の使い方(アプリ)
 
-1. **先に `run.bat` でWebUIを起動しておく**(黒い画面とブラウザは開いたままにする。ブラウザの画面は閉じてもOK、黒い画面は閉じない)
+1. **先に ComfyUI を起動しておく**(`run_nvidia_gpu.bat`。黒い画面は開いたままにする)
 2. いつもどおり `起動.bat` でサムネイルアプリを起動
 3. **Node(拠点名)** を入力 or プルダウンから選ぶ
 4. 左側の「**🤖 AI Generate**」セクションで:
@@ -146,7 +137,7 @@ cd /d D:\bdm-thumbnail_app_v02
    - 「**✨ Generate BG + Effect (AI)**」を押す → 背景とエフェクトが**同時に**生成されます
    - 片方だけ作り直したいときは「BG only」「Effect only」
 5. 生成が終わると自動でセットされ、プレビューに反映されます
-   (時間はGPU性能次第。目安: RTX系なら10〜30秒/枚)
+   (時間はGPU性能次第。目安: RTX 3060 Ti なら10〜30秒/枚)
 6. 気に入らなければもう一度ボタンを押せば**別の画像**が出ます
 7. あとはいつもどおり「📤 Export PNG」
 
@@ -155,7 +146,7 @@ cd /d D:\bdm-thumbnail_app_v02
 
 ---
 
-## 9. エフェクトの見本画像を参考にさせる(任意)
+## 8. エフェクトの見本画像を参考にさせる(任意)
 
 手持ちの後方エフェクトのサンプルを見本として渡すと、**その雰囲気に寄せて**生成してくれます(img2imgという仕組みを使います)。
 
@@ -170,7 +161,7 @@ cd /d D:\bdm-thumbnail_app_v02
    ```
 2. あとは普通に「Effect only」などで生成するだけ。見本があれば自動で使われます。
 
-**見本にどれだけ寄せるか**は `config/ai_config.json` の `"denoising_strength"` で調整できます:
+**見本にどれだけ寄せるか**は `config/ai_config.json` の `comfyui` 内 `"denoising_strength"` で調整できます:
 - `0.6` … 見本にかなり近い
 - `0.7` … 標準(見本の雰囲気を残しつつ変化)
 - `0.8` … 見本から大きく変化
@@ -180,7 +171,7 @@ cd /d D:\bdm-thumbnail_app_v02
 
 ---
 
-## 10. 生成される絵柄を調整したいとき
+## 9. 生成される絵柄を調整したいとき
 
 プロンプト(AIへの指示文)はコードとは別のファイルにまとめてあります。
 **メモ帳で開いて文章を書き換えるだけ**で調整できます。
@@ -194,37 +185,39 @@ cd /d D:\bdm-thumbnail_app_v02
   ```
 - `effect.types` … エフェクト種類ごとの描写。**新しい種類をここに追加すると、アプリのドロップダウンにも自動で出ます**
 
-### `config/ai_config.json`(画質・速度の調整)
+### `config/ai_config.json`(画質・速度の調整 / `comfyui` の部分)
 
 | 設定 | 意味 | 目安 |
 |---|---|---|
-| `width` / `height` | 生成サイズ | SD1.5系: 960×540 / SDXL系: 1344×768 |
+| `ckpt_name` | 使うモデル名 | 空=自動 / 指定するならファイル名 |
+| `width` / `height` | 生成サイズ | SD1.5系: 768×432 / SDXL系: 1344×768 |
 | `steps` | 描き込み回数 | 20=速い 〜 35=丁寧 |
-| `timeout_seconds` | 待ち時間の上限 | GPUが遅いなら600などに増やす |
+| `sampler_name` / `scheduler` | 生成アルゴリズム | 通常はそのままでOK |
+| `timeout_seconds` | 待ち時間の上限 | 遅いなら600などに増やす |
 
 ※ JSONファイルは「`"` や `,` を消してしまう」と壊れるので、**文章や数字の中身だけ**書き換えてください。
 
 ---
 
-## 11. よくあるエラーと対処法
+## 10. よくあるエラーと対処法
 
 | 出るメッセージ・症状 | 原因 | 対処 |
 |---|---|---|
-| WebUIに接続できません | WebUIを起動していない / `--api` を付けていない | `run.bat` で起動する。手順②の `--api` 設定を確認 |
-| CUDA out of memory(黒い画面に赤字) | GPUメモリ不足 | `--medvram`(それでもダメなら `--lowvram`)を追加。`width/height` を下げる |
-| タイムアウトしました | 生成が遅い | `config/ai_config.json` の `timeout_seconds` を 600 に増やす |
-| 1枚に何分もかかる | CPUで動いている | NVIDIA GPUドライバを最新にする。GPUがない場合は仕様です |
-| 真っ黒な画像が出る | モデルとの相性 | `webui-user.bat` の COMMANDLINE_ARGS に `--no-half-vae` を追加 |
-| エフェクトの抜けが汚い | 暗い色は透明扱いになるため | 炎・雷など発光系は得意。暗い色主体のエフェクトは `effect.types` の文に「bright」「glowing」を足す |
+| ComfyUIに接続できません | ComfyUIを起動していない | `run_nvidia_gpu.bat` で起動する。黒い画面を閉じていないか確認 |
+| モデル(checkpoint)が見つかりません | モデル未配置 | 手順②で `models\checkpoints\` に `.safetensors` を入れる |
+| CUDA out of memory(黒い画面に赤字) | GPUメモリ不足 | `width/height` を下げる。SDXLなら軽いSD1.5系モデルに変える |
+| タイムアウトしました | 生成が遅い | `config/ai_config.json` の `comfyui` の `timeout_seconds` を 600 に増やす |
+| エフェクトの抜けが汚い | 暗い色は透明扱いになるため | 炎・雷など発光系は得意。暗い色主体は `effect.types` の文に「bright」「glowing」を足す |
+| ポートが違うと言われる/つながらない | ComfyUIを別ポートで起動している | 黒い画面に出るURLを見て、`config/ai_config.json` の `comfyui.url` をそれに合わせる |
 
 困ったら、まず確認コマンドを実行すると原因がわかりやすいです:
-```bat
+```
 .\.venv\Scripts\python.exe -m core.ai_image check
 ```
 
 ---
 
-## 12. 今回追加されたファイル(参考)
+## 11. 今回のファイル(参考)
 
 | ファイル | 役割 | 触ってOK? |
 |---|---|---|
@@ -233,7 +226,6 @@ cd /d D:\bdm-thumbnail_app_v02
 | `config/ai_prompts.json` | AIへの指示文(プロンプト) | 触ってOK |
 | `assets/backgrounds/ai/` | 生成された背景の保存先 | 不要なものは削除OK |
 | `assets/effects/ai/` | 生成されたエフェクトの保存先 | 不要なものは削除OK |
-| `.env.example` | クラウドAPI用の設定見本 | **ローカル運用では不要。無視してOK** |
 
-> 補足: 将来クラウドAPI(Stability AI)を使いたくなったら、`config/ai_config.json` の
-> `"provider"` を `"stability"` に変えて `.env` にキーを書けば切り替わります。普段は気にしなくてOKです。
+> 補足: ComfyUI以外に、AUTOMATIC1111 / Stability AI / OpenAI にも対応しています。`config/ai_config.json` の
+> `"provider"` を切り替えれば使えますが、普段は `comfyui` のままでOKです。

@@ -1,7 +1,23 @@
 {
-  "_comment": "AI画像生成の設定。providerは sdwebui(ローカル・無料・標準) / stability / openai から選ぶ。",
+  "_comment": "AI画像生成の設定。providerは comfyui(ローカル・無料・標準) / sdwebui / stability / openai から選ぶ。",
 
-  "provider": "sdwebui",
+  "provider": "comfyui",
+
+  "comfyui": {
+    "_comment": "ローカルのComfyUIを起動しておくこと(通常 http://127.0.0.1:8188 )。",
+    "_comment_ckpt": "ckpt_name を空にすると、ComfyUIにあるモデルを自動採用する。特定モデルを使うならファイル名を書く(例: dreamshaper_8.safetensors)。",
+    "_comment_size": "SD1.5系モデルなら 768x432 程度。SDXL系モデルなら 1344x768 に上げてOK。8の倍数に自動調整される。",
+    "_comment_reference": "denoising_strength: サンプル画像(material/サンプル)をどれだけ変化させるか。0.6=見本に近い 〜 0.8=大きく変化",
+    "url": "http://127.0.0.1:8188",
+    "ckpt_name": "",
+    "width": 768,
+    "height": 432,
+    "steps": 28,
+    "cfg_scale": 7,
+    "sampler_name": "euler",
+    "scheduler": "normal",
+    "denoising_strength": 0.7
+  },
 
   "sdwebui": {
     "_comment": "ローカルのStable Diffusion WebUI(AUTOMATIC1111)を --api 付きで起動しておくこと。",

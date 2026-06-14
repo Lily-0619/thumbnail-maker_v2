@@ -125,3 +125,7 @@ material/
 font/
 
 >>>>>>> Stashed changes
+
+# AI generated images
+assets/backgrounds/ai/*.png
+assets/effects/ai/*.png
