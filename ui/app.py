@@ -430,7 +430,6 @@ class ThumbnailApp(ctk.CTk):
         self.node_x = self._build_number_row(parent, "Node X", "100")
         self.node_y = self._build_number_row(parent, "Node Y", "300")
         self.node_size = self._build_number_row(parent, "Node Size", "170")
-        self.subtitle_x = self._build_number_row(parent, "Node War X", "100")
         self.subtitle_y = self._build_number_row(parent, "Node War Y", "550")
         self.subtitle_size = self._build_number_row(parent, "Node War Size", "75")
         self.guild_x = self._build_number_row(parent, "Guild X", "100")
@@ -790,7 +789,6 @@ class ThumbnailApp(ctk.CTk):
         self._set_entry(self.node_x, text_cfg.get("node_name", {}).get("x", 100))
         self._set_entry(self.node_y, text_cfg.get("node_name", {}).get("y", 300))
         self._set_entry(self.node_size, text_cfg.get("node_name", {}).get("font_size", 170))
-        self._set_entry(self.subtitle_x, text_cfg.get("subtitle", {}).get("x", 100))
         self._set_entry(self.subtitle_y, text_cfg.get("subtitle", {}).get("y", 550))
         self._set_entry(self.subtitle_size, text_cfg.get("subtitle", {}).get("font_size", 75))
         self._set_entry(self.guild_x, text_cfg.get("guilds", {}).get("x", 100))
@@ -837,7 +835,7 @@ class ThumbnailApp(ctk.CTk):
         return {
             "date": {"x": self.date_x, "y": self.date_y, "size": self.date_size},
             "node_name": {"x": self.node_x, "y": self.node_y, "size": self.node_size},
-            "subtitle": {"x": self.subtitle_x, "y": self.subtitle_y, "size": self.subtitle_size},
+            "subtitle": {"y": self.subtitle_y, "size": self.subtitle_size},
             "guilds": {"x": self.guild_x, "y": self.guild_y, "size": self.guild_size},
             "branding": {"x": self.branding_x, "y": self.branding_y, "size": self.branding_size},
         }
@@ -867,8 +865,10 @@ class ThumbnailApp(ctk.CTk):
         controls = self._text_control_map().get(key)
         if not controls:
             return
-        self._set_entry(controls["x"], self._int_value(controls["x"], 0) + dx)
-        self._set_entry(controls["y"], self._int_value(controls["y"], 0) + dy)
+        if "x" in controls:
+            self._set_entry(controls["x"], self._int_value(controls["x"], 0) + dx)
+        if "y" in controls:
+            self._set_entry(controls["y"], self._int_value(controls["y"], 0) + dy)
         if refresh:
             self._refresh_preview_after_text_edit()
 
@@ -991,7 +991,6 @@ class ThumbnailApp(ctk.CTk):
         text_cfg.setdefault("subtitle", {}).update(
             {
                 "text": "Node War",
-                "x": self._int_value(self.subtitle_x, 100),
                 "y": self._int_value(self.subtitle_y, 550),
                 "font_size": self._int_value(self.subtitle_size, 75),
             }
