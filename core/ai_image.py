@@ -726,10 +726,8 @@ def check_setup() -> str:
         lines.append(f"・ComfyUI自動起動        : {'ON' if cfg.get('auto_start', False) else 'OFF'}")
         if cfg.get("auto_start", False):
             missing = [key for key in ("python_path", "main_path", "working_dir") if not str(cfg.get(key, "")).strip()]
-            lines.append(
-                "・ComfyUI起動設定        : "
-                + ("OK" if not missing else f"NG({', '.join(missing)} が未設定)")
-            )
+            status = "OK" if not missing else f"NG({', '.join(missing)} が未設定)"
+            lines.append(f"・ComfyUI起動設定        : {status}")
         if _is_comfyui_running(url, timeout=5):
             lines.append(f"・ComfyUI接続({url}) : OK")
         else:

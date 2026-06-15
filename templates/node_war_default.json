@@ -34,7 +34,7 @@
     "subtitle": {
       "text": "Node War",
       "x": 100,
-      "y": 500,
+      "y": 550,
       "font_size": 75,
       "color": "#E7B93E",
       "stroke_color": "#000000",
@@ -76,7 +76,7 @@
     "type": "text",
     "text": "Black Desert Mobile",
     "font_path": "",
-    "x": 14000,
+    "x": 1320,
     "y": 980,
     "font_size": 100,
     "color": "#F4F4F4",
