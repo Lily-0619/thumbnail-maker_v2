@@ -22,7 +22,8 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 def load_thumbnail(path: Path, size):
     """透過を保ったままサムネを生成して返す（失敗時 None）。"""
     try:
-        img = Image.open(path).convert("RGBA")
+        with Image.open(path) as opened:
+            img = opened.convert("RGBA")
         img.thumbnail(size, Image.LANCZOS)
         canvas = Image.new("RGBA", size, (0, 0, 0, 0))
         offset = ((size[0] - img.width) // 2, (size[1] - img.height) // 2)
@@ -45,7 +46,8 @@ class ZoomWindow(ctk.CTkToplevel):
 
     def _build(self, path):
         try:
-            img = Image.open(path).convert("RGBA")
+            with Image.open(path) as opened:
+                img = opened.convert("RGBA")
         except Exception:
             ctk.CTkLabel(self, text="画像を開けませんでした。").pack(pady=20)
             return
@@ -87,6 +89,8 @@ class PreviewPanel(ctk.CTkFrame):
         """指定パスの画像をプレビューに表示する。"""
         path = Path(path) if path else None
         self._current_path = path
+        self._image_label.configure(image=None, text="")
+        self._image_label.update_idletasks()
         if path is None or not path.exists():
             self._img_ref = None
             self._image_label.configure(image=None, text="未分類画像を選択してください")
@@ -146,6 +150,12 @@ class UnsortedGrid(ctk.CTkScrollableFrame):
                 compound="top",
                 width=104,
                 height=116,
-                command=lambda p=path: self._on_select(p),
+                command=lambda p=path: self._select(p),
             )
             btn.grid(row=r, column=c, padx=4, pady=4)
+            if path == self._selected:
+                btn.configure(border_width=2)
+
+    def _select(self, path):
+        self._selected = path
+        self._on_select(path)

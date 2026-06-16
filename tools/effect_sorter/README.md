@@ -14,16 +14,29 @@ python tools/effect_sorter/effect_sorter_app.py
 
 Windows ではルートの `素材仕分け起動.bat` をダブルクリックしてもよい。
 
-## D&D（任意）
+## D&D（必須）
 
-エクスプローラから未分類エリアへ画像をドラッグ&ドロップしたい場合のみ:
+エクスプローラ / Finder から未分類エリアへ画像をドラッグ&ドロップするため、`tkinterdnd2` が必須です。
 
 ```
 pip install -r tools/effect_sorter/requirements.txt
 ```
 
-`tkinterdnd2` が無くても、画面下の **「＋ 画像を追加」** ボタンで取り込めるため
-ツールは完全に動作する。
+画面下の **「＋ 画像を追加」** ボタンも残していますが、D&D前提で使えるようにしています。
+
+## Ollama（オラマ）翻訳
+
+effect① / effect② の **「Ollamaで日本語→英語」** ボタンは、ローカルの Ollama を使います。
+
+アプリ起動時に Ollama の接続確認を行い、起動していなければ `ollama serve` を自動実行します。
+
+1. Ollama をインストールしておく
+2. 使うモデルを入れる（例: `ollama pull llama3.1`）
+3. 必要なら環境変数で変更する
+   - `OLLAMA_URL`（標準: `http://127.0.0.1:11434`）
+   - `OLLAMA_MODEL`（標準: `llama3.1`）
+   - `OLLAMA_START_COMMAND`（標準: `ollama serve`）
+   - `OLLAMA_AUTO_START`（`0` / `false` / `no` で自動起動しない）
 
 ## 命名ルール
 
