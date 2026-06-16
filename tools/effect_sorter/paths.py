@@ -18,6 +18,9 @@ MATERIAL_DIR = PROJECT_ROOT / "material"
 CLASS_BUTTON_DIR = MATERIAL_DIR / "class_button"
 EFFECT_DIR = MATERIAL_DIR / "effect"
 UNSORTED_DIR = EFFECT_DIR / "_unsorted"
+# 連続仕分け用（保留・ゴミ箱）。完全削除はせず、ここへ退避して復元できるようにする。
+HOLD_DIR = EFFECT_DIR / "_hold"
+TRASH_DIR = EFFECT_DIR / "_trash"
 
 CONFIG_DIR = PROJECT_ROOT / "config"
 WORDS_JSON = CONFIG_DIR / "effect_sorter_words.json"
