@@ -1,0 +1,4 @@
+# tools/effect_sorter 専用の追加依存（本体 requirements.txt は変更しない）
+# D&D（ドラッグ&ドロップ）用。無くても「画像を追加」ボタンで動作する。
+tkinterdnd2>=0.4.0
+# Pillow, customtkinter は本体 requirements.txt 済み
