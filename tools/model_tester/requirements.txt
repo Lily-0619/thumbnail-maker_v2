@@ -1,0 +1,5 @@
+# tools/model_tester 専用の依存（本体 requirements.txt は変更しない）
+# customtkinter / Pillow / requests は本体にも入っているが、単体導入用に明記しておく。
+customtkinter>=5.2.0
+Pillow>=10.0.0
+requests>=2.28.0
