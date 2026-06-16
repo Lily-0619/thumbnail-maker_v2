@@ -121,12 +121,14 @@ class UnsortedGrid(ctk.CTkScrollableFrame):
         self._on_select = on_select
         self._thumb_refs = []
         self._selected = None
+        self._buttons = {}
 
     def refresh(self, image_paths):
         """画像パスのリストを受け取りグリッドを作り直す。"""
         for child in self.winfo_children():
             child.destroy()
         self._thumb_refs.clear()
+        self._buttons = {}
 
         if not image_paths:
             ctk.CTkLabel(
@@ -153,9 +155,16 @@ class UnsortedGrid(ctk.CTkScrollableFrame):
                 command=lambda p=path: self._select(p),
             )
             btn.grid(row=r, column=c, padx=4, pady=4)
+            self._buttons[path] = btn
             if path == self._selected:
                 btn.configure(border_width=2)
 
-    def _select(self, path):
+    def set_selected(self, path):
+        """選択中画像をプログラム的に設定し、枠線ハイライトを更新する。"""
         self._selected = path
+        for p, b in self._buttons.items():
+            b.configure(border_width=2 if p == path else 0)
+
+    def _select(self, path):
+        self.set_selected(path)
         self._on_select(path)

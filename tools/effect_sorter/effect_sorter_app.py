@@ -35,10 +35,16 @@ from tools.effect_sorter.widgets import (  # noqa: E402
 )
 
 # ── Theme（本体に合わせる）──
+# pink_theme.json は config/ にも assets/config/ にも置かれうるため両方を探す。
 ctk.set_appearance_mode("light")
-_THEME_PATH = paths.CONFIG_DIR / "pink_theme.json"
-if _THEME_PATH.exists():
-    ctk.set_default_color_theme(str(_THEME_PATH))
+_THEME_CANDIDATES = (
+    paths.CONFIG_DIR / "pink_theme.json",
+    paths.PROJECT_ROOT / "assets" / "config" / "pink_theme.json",
+)
+for _theme_path in _THEME_CANDIDATES:
+    if _theme_path.exists():
+        ctk.set_default_color_theme(str(_theme_path))
+        break
 else:
     ctk.set_default_color_theme("blue")
 
@@ -48,6 +54,13 @@ PINK = {
     "button": "#db3b8f",
     "button_hover": "#c02e7b",
     "select": "#3f94d1",
+    # 連続仕分け用アクションボタン
+    "skip": "#7a8aa0",
+    "skip_hover": "#5f6e85",
+    "hold": "#c9a23b",
+    "hold_hover": "#a8861f",
+    "delete": "#b04a4a",
+    "delete_hover": "#8f3838",
 }
 
 
@@ -79,7 +92,9 @@ class EffectSorterApp(DnDCTk):
         self.effect2 = ctk.StringVar(value="")
         self.title_text = ctk.StringVar(value="")
         self.ollama_status = ctk.StringVar(value="Ollama: 起動確認中...")
+        self.remaining = ctk.StringVar(value="残り 0 枚")
         self.selected_image = None  # _unsorted 内の選択中画像 Path
+        self._unsorted_list = []  # 現在表示中の未分類画像（連続仕分けのインデックス基準）
 
         self._class_buttons = []
         self._pos_buttons = {}
@@ -88,6 +103,7 @@ class EffectSorterApp(DnDCTk):
         self._enable_dnd()
         self.refresh_unsorted()
         self.refresh_class_buttons()
+        self.refresh_effect2_history()  # effect② 共通履歴は起動時から表示
         self._update_title()
         self._start_ollama_on_launch()
 
@@ -192,17 +208,37 @@ class EffectSorterApp(DnDCTk):
         self._e2_hist.grid(row=4, column=0, sticky="nsew", padx=8, pady=4)
         e2col.columnconfigure(0, weight=1)
 
-        # ── 右カラム: プレビュー + 未分類 ──
+        # ── 右カラム: プレビュー + アクション + 未分類 ──
         right = ctk.CTkFrame(self, fg_color=PINK["panel"])
         right.grid(row=1, column=3, sticky="nsew", padx=(6, 10), pady=6)
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(2, weight=1)
         right.columnconfigure(0, weight=1)
 
         self._preview = PreviewPanel(right)
         self._preview.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
 
+        # ── 連続仕分けのアクションバー（残り枚数 + スキップ/保留/削除） ──
+        actions = ctk.CTkFrame(right, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        ctk.CTkLabel(
+            actions, textvariable=self.remaining,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left", padx=(2, 8))
+        ctk.CTkButton(
+            actions, text="🗑 削除", width=72, command=self.on_delete,
+            fg_color=PINK["delete"], hover_color=PINK["delete_hover"],
+        ).pack(side="right", padx=2)
+        ctk.CTkButton(
+            actions, text="保留", width=64, command=self.on_hold,
+            fg_color=PINK["hold"], hover_color=PINK["hold_hover"],
+        ).pack(side="right", padx=2)
+        ctk.CTkButton(
+            actions, text="⏭ スキップ", width=84, command=self.on_skip,
+            fg_color=PINK["skip"], hover_color=PINK["skip_hover"],
+        ).pack(side="right", padx=2)
+
         unsorted_wrap = ctk.CTkFrame(right, fg_color="transparent")
-        unsorted_wrap.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        unsorted_wrap.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 6))
         unsorted_wrap.rowconfigure(0, weight=1)
         unsorted_wrap.columnconfigure(0, weight=1)
         self._unsorted_grid = UnsortedGrid(unsorted_wrap, on_select=self._select_image)
@@ -393,6 +429,7 @@ class EffectSorterApp(DnDCTk):
 
     def _select_image(self, path):
         self.selected_image = Path(path)
+        self._unsorted_grid.set_selected(self.selected_image)
         self._preview.show(self.selected_image)
 
     # ──────────────────────────────────────────
@@ -480,6 +517,7 @@ class EffectSorterApp(DnDCTk):
         pos = self.position.get()
         e1 = self.effect1.get().strip()
         e2 = self.effect2.get().strip()
+        old_index = self._index_of_selected()  # 連続仕分け: 確定後この位置へ次画像が来る
 
         # 1. バリデーション
         try:
@@ -553,13 +591,11 @@ class EffectSorterApp(DnDCTk):
         except Exception:
             pass  # 履歴保存失敗はアプリを落とさない
 
-        # 10. UI更新
+        # 10. UI更新（連続仕分け: 同じ位置へスライドする次の未分類画像を自動選択）
         self.selected_image = None
-        self._preview.show(None)
-        self.refresh_unsorted_and_autoselect()
+        self._advance_after_removal(old_index)
         self.refresh_effect1_history()
         self.refresh_effect2_history()
-        self._update_title()
 
     # ──────────────────────────────────────────
     #  未分類一覧
@@ -576,13 +612,115 @@ class EffectSorterApp(DnDCTk):
         return out
 
     def refresh_unsorted(self):
-        self._unsorted_grid.refresh(self._unsorted_images())
+        """未分類一覧を読み直してグリッドとカウンタを更新する。"""
+        self._unsorted_list = self._unsorted_images()
+        self._unsorted_grid.refresh(self._unsorted_list)
+        self.remaining.set(f"残り {len(self._unsorted_list)} 枚")
 
-    def refresh_unsorted_and_autoselect(self):
-        imgs = self._unsorted_images()
-        self._unsorted_grid.refresh(imgs)
-        if imgs:
-            self._select_image(imgs[0])  # 次の未分類画像を自動選択（Phase2）
+    # ──────────────────────────────────────────
+    #  連続仕分け（スキップ / 保留 / 削除）
+    # ──────────────────────────────────────────
+
+    def _index_of_selected(self) -> int:
+        """選択中画像の現在の一覧内インデックス。無ければ 0。"""
+        if self.selected_image is None:
+            return 0
+        try:
+            return self._unsorted_list.index(self.selected_image)
+        except ValueError:
+            return 0
+
+    def _select_at_index(self, idx: int):
+        """更新後の一覧で idx 位置（範囲外はクランプ）を選ぶ。空なら選択解除。"""
+        if not self._unsorted_list:
+            self.selected_image = None
+            self._preview.show(None)
+            return
+        idx = max(0, min(idx, len(self._unsorted_list) - 1))
+        self._select_image(self._unsorted_list[idx])
+
+    def _advance_after_removal(self, old_index: int):
+        """確定/保留/削除で1枚消えた後、その位置へスライドしてくる次画像を自動選択。"""
+        self.refresh_unsorted()
+        self._select_at_index(old_index)
+        self._update_title()
+
+    def _move_out_of_unsorted(self, src: Path, dest_dir: Path) -> Path:
+        """copy→検証→元削除 で src を dest_dir へ退避。最終パスを返す（失敗時は例外）。"""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        if dest.exists():
+            stem, suffix, n = src.stem, src.suffix, 1
+            while dest.exists():
+                dest = dest_dir / f"{stem}_dup{n}{suffix}"
+                n += 1
+        shutil.copy2(src, dest)
+        # 検証（存在＋サイズ一致）。NGなら作りかけを消し、元は触らない。
+        if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            raise OSError("コピー検証に失敗しました。")
+        src.unlink()  # 検証OK後にのみ元を削除
+        return dest
+
+    def on_skip(self):
+        """ファイルを一切変更せず、次の未分類画像へ進む（非破壊）。"""
+        if not self._unsorted_list:
+            messagebox.showinfo("スキップ", "未分類画像がありません。")
+            return
+        if self.selected_image is None:
+            self._select_at_index(0)
+            return
+        idx = self._index_of_selected()
+        if idx + 1 < len(self._unsorted_list):
+            self._select_at_index(idx + 1)
+        else:
+            messagebox.showinfo("スキップ", "これが最後の未分類画像です。")
+
+    def on_hold(self):
+        """選択中画像を _hold へ退避して次へ進む（後で処理する用・復元可能）。"""
+        if self.selected_image is None or not self.selected_image.exists():
+            messagebox.showwarning("未選択", "画像が選択されていません。")
+            return
+        src = self.selected_image
+        old_index = self._index_of_selected()
+        try:
+            self._move_out_of_unsorted(src, paths.HOLD_DIR)
+        except Exception as e:
+            messagebox.showwarning(
+                "保留に失敗",
+                f"画像を保留フォルダへ移せませんでした。\n{e}\n\n"
+                "画像は _unsorted に残っています。",
+            )
+            return
+        self.selected_image = None
+        self._advance_after_removal(old_index)
+
+    def on_delete(self):
+        """選択中画像を _trash へ退避（完全削除はしない・確認あり・復元可能）。"""
+        if self.selected_image is None or not self.selected_image.exists():
+            messagebox.showwarning("未選択", "画像が選択されていません。")
+            return
+        src = self.selected_image
+        if not messagebox.askyesno(
+            "削除の確認",
+            f"「{src.name}」をゴミ箱フォルダへ移動します。\n\n"
+            "完全削除ではなく material/effect/_trash/ に退避するので、\n"
+            "後から手動で復元できます。よろしいですか？",
+        ):
+            return
+        old_index = self._index_of_selected()
+        try:
+            self._move_out_of_unsorted(src, paths.TRASH_DIR)
+        except Exception as e:
+            messagebox.showwarning(
+                "削除に失敗",
+                f"画像をゴミ箱フォルダへ移せませんでした。\n{e}\n\n"
+                "画像は _unsorted に残っています。",
+            )
+            return
+        self.selected_image = None
+        self._advance_after_removal(old_index)
 
 
 def main():
