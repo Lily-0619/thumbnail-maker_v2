@@ -41,7 +41,8 @@
     "hover_color": ["#b02070", "#e91e8c"],
     "checkmark_color": ["#ffffff", "#ffffff"],
     "border_color": ["#d89aba", "#d89aba"],
-    "text_color": ["#402436", "#402436"]
+    "text_color": ["#402436", "#402436"],
+    "text_color_disabled": ["#9b647c", "#9b647c"]
   },
   "CTkSwitch": {
     "corner_radius": 1000,

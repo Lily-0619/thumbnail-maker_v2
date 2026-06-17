@@ -24,7 +24,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import customtkinter as ctk  # noqa: E402
 from PIL import Image  # noqa: E402
-from tkinterdnd2 import DND_FILES, TkinterDnD  # noqa: E402
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD  # noqa: E402
+except ImportError:  # D&Dが無い環境でも、仕分け本体は起動できるようにする。
+    DND_FILES = None
+    TkinterDnD = None
 
 from tools.effect_sorter import naming, paths, translate, words_store  # noqa: E402
 from tools.effect_sorter.naming import ValidationError  # noqa: E402
@@ -64,12 +68,16 @@ PINK = {
 }
 
 
-class DnDCTk(ctk.CTk, TkinterDnD.DnDWrapper):
-    """CustomTkinterでtkinterdnd2を必須利用するためのルートクラス。"""
+if TkinterDnD is not None:
+    class DnDCTk(ctk.CTk, TkinterDnD.DnDWrapper):
+        """CustomTkinterでtkinterdnd2を利用するためのルートクラス。"""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.TkdndVersion = TkinterDnD._require(self)
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+else:
+    class DnDCTk(ctk.CTk):
+        """tkinterdnd2が無い環境向け。追加ボタンで画像を取り込む。"""
 
 
 class EffectSorterApp(DnDCTk):
@@ -279,6 +287,9 @@ class EffectSorterApp(DnDCTk):
 
     def _enable_dnd(self):
         """未分類グリッドとアプリ全体への画像ドロップを有効化する。"""
+        if DND_FILES is None:
+            self._dnd_label.configure(text="ドラッグ&ドロップは無効です。『＋ 画像を追加』を使ってください。")
+            return
         target = self._unsorted_grid
         target.drop_target_register(DND_FILES)
         target.dnd_bind("<<Drop>>", self._on_drop)
