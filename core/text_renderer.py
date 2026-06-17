@@ -20,7 +20,7 @@ DEFAULT_LANGUAGE_FONT_PATHS = {
 
 LANGUAGE_FONT_CATEGORIES = {
     "ja": {
-        "label": "日本語（🇯🇵）",
+        "label": "JP 🇯🇵",
         "fallbacks": [
             "C:/Windows/Fonts/meiryo.ttc",
             "C:/Windows/Fonts/yugothb.ttc",
@@ -31,7 +31,7 @@ LANGUAGE_FONT_CATEGORIES = {
         ],
     },
     "ru": {
-        "label": "キリル / ロシア語（🇷🇺）",
+        "label": "RU 🇷🇺",
         "fallbacks": [
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/segoeui.ttf",
@@ -41,7 +41,7 @@ LANGUAGE_FONT_CATEGORIES = {
         ],
     },
     "en": {
-        "label": "アルファベット / 英語（🇺🇸）",
+        "label": "EN 🇺🇸",
         "fallbacks": [
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/segoeui.ttf",
@@ -51,7 +51,7 @@ LANGUAGE_FONT_CATEGORIES = {
         ],
     },
     "zh": {
-        "label": "中国語（🇨🇳）",
+        "label": "CN 🇨🇳",
         "fallbacks": [
             "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simhei.ttf",
@@ -61,7 +61,7 @@ LANGUAGE_FONT_CATEGORIES = {
         ],
     },
     "ko": {
-        "label": "ハングル / 韓国語（🇰🇷）",
+        "label": "KR 🇰🇷",
         "fallbacks": [
             "C:/Windows/Fonts/malgun.ttf",
             "/System/Library/Fonts/AppleSDGothicNeo.ttc",
@@ -278,6 +278,34 @@ def _text_size(text: str, font: ImageFont.FreeTypeFont, stroke_width: int = 0) -
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
+def branding_position(
+    branding_text: str,
+    font: ImageFont.FreeTypeFont,
+    canvas_w: int,
+    canvas_h: int,
+    branding_cfg: dict,
+) -> tuple[int, int]:
+    """ロゴ（ブランディング文字）の描画左上座標を返す。
+
+    align が "bottom_right"（既定）のときは、テキストの実寸を測って
+    右端・下端から margin（既定50px）ぴったりに収まる左上座標を計算する。
+    これで文字が長くても右端で見切れない。それ以外は従来の x/y を使う。
+    """
+    align = branding_cfg.get("align", "bottom_right")
+    if align != "bottom_right":
+        return int(branding_cfg.get("x", 1320)), int(branding_cfg.get("y", 980))
+
+    margin = int(branding_cfg.get("margin", 50))
+    stroke_width = int(branding_cfg.get("stroke_width", 3))
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    bbox = draw.textbbox((0, 0), branding_text, font=font, stroke_width=stroke_width)
+    # (x,y) に描いたときの右端 = x + bbox[2]、下端 = y + bbox[3]。これらを淵-margin に合わせる。
+    x = canvas_w - margin - bbox[2]
+    y = canvas_h - margin - bbox[3]
+    return int(x), int(y)
+
+
 def _centered_subtitle_x(node_text: str, subtitle_text: str, text_cfg: dict, font_path: str) -> int:
     """Node Warを拠点名の描画幅の中央へ自動配置するX座標を返す。"""
     node_cfg = text_cfg.get("node_name", {})
@@ -403,14 +431,15 @@ def build_text_element_bounds(
         if branding_text:
             brand_font_path = branding_cfg.get("font_path") or font_path
             brand_font = load_font(brand_font_path, branding_cfg.get("font_size", 46))
+            brand_x, brand_y = branding_position(branding_text, brand_font, 1920, 1080, branding_cfg)
             elements.append(
                 {
                     "key": "branding",
                     "label": TEXT_ELEMENT_LABELS["branding"],
                     "bbox": _text_bbox(
                         branding_text,
-                        branding_cfg.get("x", 1320),
-                        branding_cfg.get("y", 980),
+                        brand_x,
+                        brand_y,
                         brand_font,
                         branding_cfg.get("stroke_width", 3),
                     ),
@@ -562,11 +591,13 @@ def render_all_text(
         if branding_text:
             brand_font_path = branding_cfg.get("font_path") or font_path
             brand_font = load_font(brand_font_path, branding_cfg.get("font_size", 46))
+            cw, ch = image.size
+            brand_x, brand_y = branding_position(branding_text, brand_font, cw, ch, branding_cfg)
             image = draw_text_with_stroke(
                 image,
                 branding_text,
-                branding_cfg.get("x", 1320),
-                branding_cfg.get("y", 980),
+                brand_x,
+                brand_y,
                 brand_font,
                 branding_cfg.get("color", "#F4F4F4"),
                 branding_cfg.get("stroke_color", "#000000"),

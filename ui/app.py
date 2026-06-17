@@ -12,10 +12,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from core import ai_image
-from core.composer import build_asset_element_bounds, compose_thumbnail
+from core.composer import build_asset_element_bounds, compose_thumbnail, pick_random_background
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
     DEFAULT_COMMON_FONT_PATH,
@@ -59,6 +59,14 @@ LANGUAGE_FONT_DIRS = {
 ASSET_ELEMENT_LABELS = {
     "character": "Character",
     "back_effect": "Back Effect",
+}
+# 言語別フォントの字体プレビューに使うサンプル文字（その言語の字形が出るもの）
+FONT_SAMPLE_TEXT = {
+    "ja": "あ亜 Ag",
+    "ko": "가나 Ag",
+    "zh": "中文 Ag",
+    "en": "Aa Bb Cc",
+    "ru": "Аа Бб",
 }
 
 
@@ -145,6 +153,8 @@ class ThumbnailApp(ctk.CTk):
         self.current_template = load_template(self.current_template_name)
         self.node_options = self._load_node_options()
         self._preview_image = None
+        # 背景未指定時に一度だけ選んだランダム背景を保持し、再プレビューで変わらないようにする
+        self._auto_bg_path = None
         self._preview_text_elements = []
         self._preview_asset_elements = []
         self._character_preview_image = None
@@ -155,6 +165,8 @@ class ThumbnailApp(ctk.CTk):
         self._ai_busy = False
         self._ai_pending = 0
         self._ai_errors = []
+        self._ai_anim_index = 0
+        self._ai_anim_running = False
 
         self._build_layout()
         self._apply_template_to_controls()
@@ -182,7 +194,8 @@ class ThumbnailApp(ctk.CTk):
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=0)
         right.rowconfigure(1, weight=0)
-        right.rowconfigure(2, weight=1)
+        right.rowconfigure(2, weight=0)
+        right.rowconfigure(3, weight=1)
         self.preview = PreviewPanel(right, height=430)
         self.preview.grid(row=0, column=0, padx=10, pady=10, sticky="new")
         self.preview.set_callbacks(
@@ -190,8 +203,28 @@ class ThumbnailApp(ctk.CTk):
             on_drag=self._drag_preview_element,
             on_release=self._refresh_preview_after_text_edit,
         )
+
+        # プレビュー画像の直下にプレビュー操作ボタンを配置する
+        preview_btns = ctk.CTkFrame(right, fg_color="transparent")
+        preview_btns.grid(row=1, column=0, sticky="n", pady=(0, 6))
+        ctk.CTkButton(
+            preview_btns,
+            text="👁️  Preview",
+            height=40,
+            width=220,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._preview,
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            preview_btns,
+            text="🎲 New BG",
+            height=40,
+            width=120,
+            command=self._shuffle_background,
+        ).pack(side="left", padx=4)
+
         ctk.CTkLabel(right, textvariable=self.selected_text_name, font=ctk.CTkFont(size=14, weight="bold")).grid(
-            row=1, column=0, sticky="n", pady=(0, 4)
+            row=2, column=0, sticky="n", pady=(0, 4)
         )
         ctk.CTkLabel(
             right,
@@ -199,7 +232,7 @@ class ThumbnailApp(ctk.CTk):
             text_color="gray",
             wraplength=780,
             justify="center",
-        ).grid(row=2, column=0, sticky="n", pady=(0, 10))
+        ).grid(row=3, column=0, sticky="n", pady=(0, 10))
         self.bind("<KeyPress>", self._on_key_press)
 
     def _build_form(self, parent):
@@ -275,7 +308,13 @@ class ThumbnailApp(ctk.CTk):
         self.character_preview_label.pack(expand=True, fill="both", padx=8, pady=8)
         char_controls = ctk.CTkFrame(char_row, fg_color="transparent")
         char_controls.pack(side="left", fill="both", expand=True, pady=4)
-        ctk.CTkButton(char_controls, text="Pick Character", command=self._select_char).pack(fill="x", pady=(0, 6))
+        ctk.CTkButton(
+            char_controls,
+            text="Pick Character",
+            height=56,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._select_char,
+        ).pack(fill="x", pady=(0, 6))
         self.character_name_label = ctk.CTkLabel(
             char_controls,
             text="No character selected",
@@ -319,13 +358,16 @@ class ThumbnailApp(ctk.CTk):
         ctk.CTkLabel(parent, textvariable=self.ai_status, text_color="#e7b93e", wraplength=430, justify="left").pack(
             anchor="w", **pad
         )
-        ctk.CTkLabel(parent, text="🌟 Back Effect", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        ctk.CTkEntry(
-            parent,
-            textvariable=self.effect_path,
-            placeholder_text="Set automatically by AI, or select a file",
-        ).pack(fill="x", **pad)
-        ctk.CTkButton(parent, text="Select Effect", command=self._select_effect).pack(fill="x", **pad)
+        # 生成中のかわいい進行表示（アニメ絵文字 + ピンクのインジケータ）
+        self.ai_anim_label = ctk.CTkLabel(
+            parent, text="", text_color="#db3b8f", font=ctk.CTkFont(size=15, weight="bold")
+        )
+        self.ai_anim_label.pack(anchor="w", padx=10)
+        self.ai_progress = ctk.CTkProgressBar(
+            parent, mode="indeterminate", height=14, corner_radius=7, progress_color="#db3b8f"
+        )
+        self.ai_progress.pack(fill="x", padx=10, pady=(0, 4))
+        self.ai_progress.set(0)
 
         ctk.CTkButton(
             parent,
@@ -344,14 +386,7 @@ class ThumbnailApp(ctk.CTk):
         self.template_menu.pack(fill="x", **pad)
         ctk.CTkButton(parent, text="💾 Save as Template", command=self._save_current_template).pack(fill="x", **pad)
 
-        ctk.CTkButton(
-            parent,
-            text="👁️  Preview",
-            height=44,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._preview,
-        ).pack(fill="x", padx=10, pady=(16, 4))
-
+        # Preview button moved to below the preview image (right panel).
         ctk.CTkButton(
             parent,
             text="📤  Export PNG",
@@ -360,7 +395,7 @@ class ThumbnailApp(ctk.CTk):
             fg_color="#a92d6f",
             hover_color="#8f245e",
             command=self._export,
-        ).pack(fill="x", padx=10, pady=4)
+        ).pack(fill="x", padx=10, pady=(16, 4))
 
     def _build_options(self, parent):
         pad = {"padx": 10, "pady": 4}
@@ -370,6 +405,14 @@ class ThumbnailApp(ctk.CTk):
             fill="x", **pad
         )
         ctk.CTkButton(parent, text="Select Background", command=self._select_bg).pack(fill="x", **pad)
+
+        ctk.CTkLabel(parent, text="🌟 Manual Back Effect", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
+        ctk.CTkEntry(
+            parent,
+            textvariable=self.effect_path,
+            placeholder_text="Set automatically by AI, or select a file",
+        ).pack(fill="x", **pad)
+        ctk.CTkButton(parent, text="Select Effect", command=self._select_effect).pack(fill="x", **pad)
 
         ctk.CTkLabel(parent, text="🌐 Guild Font by Language", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkLabel(
@@ -381,18 +424,26 @@ class ThumbnailApp(ctk.CTk):
         ).pack(anchor="w", **pad)
         self.language_font_paths = {}
         self.language_font_menus = {}
+        self.language_font_previews = {}
+        self._font_preview_refs = {}
         for key in ["ja", "ko", "zh", "en", "ru"]:
             row = ctk.CTkFrame(parent)
             row.pack(fill="x", **pad)
-            ctk.CTkLabel(row, text=LANGUAGE_FONT_CATEGORIES[key]["label"], width=155, anchor="w").pack(
+            ctk.CTkLabel(row, text=LANGUAGE_FONT_CATEGORIES[key]["label"], width=64, anchor="w").pack(
                 side="left", padx=(0, 6)
             )
             font_values = self._font_options_for_language(key)
             font_var = ctk.StringVar(value=DEFAULT_LANGUAGE_FONT_PATHS[key])
             menu = ctk.CTkOptionMenu(row, values=font_values, variable=font_var)
             menu.pack(side="left", fill="x", expand=True, padx=(0, 6))
+            # 選択中フォントの字体サンプルを画像で表示（フォント変更で自動更新）
+            preview = ctk.CTkLabel(row, text="", width=150, fg_color="#fbeaf2", corner_radius=4)
+            preview.pack(side="left")
             self.language_font_paths[key] = font_var
             self.language_font_menus[key] = menu
+            self.language_font_previews[key] = preview
+            font_var.trace_add("write", lambda *_a, k=key: self._update_font_preview(k))
+            self._update_font_preview(key)
 
         ctk.CTkLabel(parent, text="🔤 Common Font / Branding", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         ctk.CTkEntry(
@@ -414,7 +465,7 @@ class ThumbnailApp(ctk.CTk):
         ).pack(fill="x", **pad)
 
         ctk.CTkLabel(parent, text="📐 Character Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
-        self.char_x = self._build_number_row(parent, "Character X", "0")
+        self.char_x = self._build_number_row(parent, "Character X", "500")
         self.char_y = self._build_number_row(parent, "Character Y", "0")
         self.char_scale = self._build_number_row(parent, "Scale", "1.0")
 
@@ -481,6 +532,40 @@ class ThumbnailApp(ctk.CTk):
         if default_path not in seen:
             values.insert(0, default_path)
         return values or [default_path]
+
+    def _render_font_sample(self, font_path: str, sample_text: str) -> Image.Image:
+        """選択中フォントでサンプル文字を描いた小さな画像を返す（失敗時は既定フォント）。"""
+        size = (150, 34)
+        img = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        font = None
+        for candidate in (font_path, self._project_path(font_path) if font_path else None):
+            if not candidate:
+                continue
+            try:
+                font = ImageFont.truetype(str(candidate), 24)
+                break
+            except (OSError, ValueError):
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+            sample_text = "(font?)"
+        draw.text((4, 2), sample_text, font=font, fill=(60, 30, 50, 255))
+        return img
+
+    def _update_font_preview(self, key: str):
+        """言語別フォント欄のサンプル画像を、現在の選択フォントで更新する。"""
+        if not getattr(self, "language_font_previews", None) or key not in self.language_font_previews:
+            return
+        font_path = self.language_font_paths[key].get().strip()
+        sample = FONT_SAMPLE_TEXT.get(key, "Aa Bb")
+        try:
+            img = self._render_font_sample(font_path, sample)
+        except Exception:
+            return
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+        self._font_preview_refs[key] = ctk_img  # GC防止に参照保持
+        self.language_font_previews[key].configure(image=ctk_img, text="")
 
     def _set_font_menu_value(self, key: str, value: str):
         value = value or DEFAULT_LANGUAGE_FONT_PATHS[key]
@@ -635,9 +720,46 @@ class ThumbnailApp(ctk.CTk):
         self._ai_busy = True
         self._ai_pending = len(jobs)
         self._ai_errors = []
-        self.ai_status.set("⏳ Generating... (about 10-60 sec per image)")
+        self.ai_status.set("")
+        self._start_ai_progress()
         for kind, arg in jobs:
             threading.Thread(target=self._ai_worker, args=(kind, arg), daemon=True).start()
+
+    # ── 生成中のかわいい進行表示 ──
+
+    def _start_ai_progress(self):
+        """生成開始時に、かわいいアニメ表示とインジケータを動かす。"""
+        self._ai_anim_running = True
+        self._ai_anim_index = 0
+        try:
+            self.ai_progress.configure(mode="indeterminate")
+            self.ai_progress.start()
+        except Exception:
+            pass
+        self._animate_ai()
+
+    def _stop_ai_progress(self):
+        """生成終了時に、アニメ表示とインジケータを止める。"""
+        self._ai_anim_running = False
+        try:
+            self.ai_progress.stop()
+            self.ai_progress.set(0)
+        except Exception:
+            pass
+        if hasattr(self, "ai_anim_label"):
+            self.ai_anim_label.configure(text="")
+
+    def _animate_ai(self):
+        """かわいい絵文字＋ドットを一定間隔で更新する（生成中のみ）。"""
+        if not self._ai_anim_running:
+            return
+        frames = ["🎨✨", "🖌️💫", "🌸✨", "🎀💕", "⭐🖼️"]
+        face = frames[self._ai_anim_index % len(frames)]
+        dots = "." * (self._ai_anim_index % 4)
+        if hasattr(self, "ai_anim_label"):
+            self.ai_anim_label.configure(text=f"{face}  おえかき中{dots}  (｡•ᴗ•｡)")
+        self._ai_anim_index += 1
+        self.after(350, self._animate_ai)
 
     def _ai_worker(self, kind: str, arg: str):
         try:
@@ -663,6 +785,7 @@ class ThumbnailApp(ctk.CTk):
             return
 
         self._ai_busy = False
+        self._stop_ai_progress()
         if self._ai_errors:
             self.ai_status.set("❌ AI generation failed. See error dialog.")
             messagebox.showerror("AI Generation Error", "\n\n".join(self._ai_errors))
@@ -773,7 +896,7 @@ class ThumbnailApp(ctk.CTk):
     def _apply_template_to_controls(self):
         self.font_path.set(self.current_template.get("font_path", DEFAULT_COMMON_FONT_PATH))
         char_cfg = self.current_template.get("character", {})
-        self._set_entry(self.char_x, char_cfg.get("offset_x", 0))
+        self._set_entry(self.char_x, char_cfg.get("offset_x", 500))
         self._set_entry(self.char_y, char_cfg.get("offset_y", 0))
         self._set_entry(self.char_scale, char_cfg.get("scale", 1.0))
 
@@ -1007,7 +1130,7 @@ class ThumbnailApp(ctk.CTk):
         template.setdefault("character", {}).update(
             {
                 "position": "right",
-                "offset_x": self._int_value(self.char_x, 0),
+                "offset_x": self._int_value(self.char_x, 500),
                 "offset_y": self._int_value(self.char_y, 0),
                 "scale": self._float_value(self.char_scale, 1.0),
             }
@@ -1061,8 +1184,35 @@ class ThumbnailApp(ctk.CTk):
     #  Preview / Export
     # ──────────────────────────────────────────
 
+    def _effective_bg_path(self, bg_path: str) -> str:
+        """背景パスを解決する。
+
+        手動/AIで背景が指定されていればそれを使う。未指定のときは
+        ランダムに1枚選び、その選択を保持して再プレビューでは選び直さない
+        （キャラや文字を動かすたびに背景が変わるのを防ぐ）。
+        """
+        bg_path = (bg_path or "").strip()
+        if bg_path:
+            self._auto_bg_path = None  # 明示指定があればキャッシュは捨てる
+            return bg_path
+        if not self._auto_bg_path or not Path(self._auto_bg_path).exists():
+            self._auto_bg_path = pick_random_background()
+        return self._auto_bg_path
+
+    def _shuffle_background(self):
+        """背景未指定時のランダム背景を選び直して再プレビューする。"""
+        self._auto_bg_path = None
+        if self.bg_path.get().strip():
+            messagebox.showinfo(
+                "Background",
+                "Manual background is set. Clear it in Options to use a random background.",
+            )
+            return
+        self._preview()
+
     def _preview(self):
         params = self._collect_params()
+        params["bg_path"] = self._effective_bg_path(params["bg_path"])
         try:
             img = compose_thumbnail(**params)
             self._preview_image = img
