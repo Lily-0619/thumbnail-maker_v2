@@ -12,9 +12,11 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import requests
 
@@ -26,6 +28,7 @@ OLLAMA_TIMEOUT_SECONDS = int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "60"))
 OLLAMA_START_TIMEOUT_SECONDS = int(os.environ.get("OLLAMA_START_TIMEOUT_SECONDS", "30"))
 OLLAMA_AUTO_START = os.environ.get("OLLAMA_AUTO_START", "1").strip().lower() not in {"0", "false", "no"}
 OLLAMA_START_COMMAND = os.environ.get("OLLAMA_START_COMMAND", "ollama serve")
+OLLAMA_EXE = os.environ.get("OLLAMA_EXE", "").strip()
 _OLLAMA_PROCESS = None
 
 
@@ -125,15 +128,58 @@ def ensure_ollama_ready(start_if_needed: bool = True) -> str:
     )
 
 
+def _resolve_ollama_args() -> list[str]:
+    args = shlex.split(OLLAMA_START_COMMAND)
+    if not args:
+        raise OllamaStartupError("OLLAMA_START_COMMAND が空です。")
+
+    command = args[0]
+    is_plain_ollama = command.lower() in {"ollama", "ollama.exe"} and "/" not in command and "\\" not in command
+    if is_plain_ollama:
+        resolved = _find_ollama_executable()
+        if resolved:
+            args[0] = resolved
+    return args
+
+
+def _find_ollama_executable() -> str | None:
+    """PATHに無い場合も、Windowsの標準インストール先からOllamaを探す。"""
+    candidates = []
+    if OLLAMA_EXE:
+        candidates.append(OLLAMA_EXE)
+
+    found = shutil.which("ollama")
+    if found:
+        candidates.append(found)
+
+    if os.name == "nt":
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        program_files = os.environ.get("ProgramFiles", "")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", "")
+        candidates.extend(
+            [
+                str(Path(local_appdata) / "Programs" / "Ollama" / "ollama.exe"),
+                str(Path(local_appdata) / "Ollama" / "ollama.exe"),
+                str(Path(program_files) / "Ollama" / "ollama.exe"),
+                str(Path(program_files_x86) / "Ollama" / "ollama.exe"),
+            ]
+        )
+    else:
+        candidates.extend(("/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"))
+
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
 def _start_ollama_process() -> None:
     """Ollamaサーバーをバックグラウンド起動する。"""
     global _OLLAMA_PROCESS
     if _OLLAMA_PROCESS and _OLLAMA_PROCESS.poll() is None:
         return
 
-    args = shlex.split(OLLAMA_START_COMMAND)
-    if not args:
-        raise OllamaStartupError("OLLAMA_START_COMMAND が空です。")
+    args = _resolve_ollama_args()
 
     creationflags = 0
     if os.name == "nt":
@@ -152,7 +198,8 @@ def _start_ollama_process() -> None:
         raise OllamaStartupError(
             "Ollamaコマンドが見つかりません。\n"
             "Windows / Mac に Ollama をインストールしてからアプリを起動してください。\n"
-            f"実行しようとしたコマンド: {OLLAMA_START_COMMAND}"
+            f"実行しようとしたコマンド: {OLLAMA_START_COMMAND}\n"
+            "PATHに無い場合は OLLAMA_EXE に ollama.exe の場所を指定できます。"
         )
     except OSError as e:
         raise OllamaStartupError(
