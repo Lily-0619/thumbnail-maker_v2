@@ -58,7 +58,7 @@
   "character": {
     "position": "right",
     "scale": 1.0,
-    "offset_x": 0,
+    "offset_x": 500,
     "offset_y": 0
   },
   "back_effect": {
@@ -76,6 +76,8 @@
     "type": "text",
     "text": "Black Desert Mobile",
     "font_path": "",
+    "align": "bottom_right",
+    "margin": 50,
     "x": 1320,
     "y": 980,
     "font_size": 100,
