@@ -10,12 +10,15 @@ effect_sorter_app.py
 本体 ui/app.py と同じく CustomTkinter で書く。
 """
 
+import ctypes
 import os
+import platform
 import shutil
 import sys
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
+import tkinter.font as tkfont
 
 # ── プロジェクトルートを sys.path に追加（本体 main.py と同様）──
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +55,48 @@ for _theme_path in _THEME_CANDIDATES:
 else:
     ctk.set_default_color_theme("blue")
 
+UI_FONT_FILE_NAME = "HachiMaruPop-Regular.ttf"
+UI_FONT_FAMILY = "Hachi Maru Pop"
+UI_FONT_CANDIDATES = (
+    paths.PROJECT_ROOT / "font" / "JP" / UI_FONT_FILE_NAME,
+    Path("D:/bdm-thumbnail_app_v02/font/JP") / UI_FONT_FILE_NAME,
+)
+
+
+def _register_ui_font() -> str:
+    """UI表示用フォントを登録し、CustomTkinterの既定フォント名を返す。"""
+    for font_path in UI_FONT_CANDIDATES:
+        if not font_path.exists():
+            continue
+        if platform.system() == "Windows":
+            try:
+                ctypes.windll.gdi32.AddFontResourceExW(str(font_path.resolve()), 0x10, 0)
+            except (AttributeError, OSError):
+                pass
+        ctk.ThemeManager.theme["CTkFont"]["family"] = UI_FONT_FAMILY
+        return UI_FONT_FAMILY
+    return ctk.ThemeManager.theme.get("CTkFont", {}).get("family", "Roboto")
+
+
+def _apply_tk_default_font(family: str) -> None:
+    """標準Tk系の文字にも同じフォントを適用する。"""
+    for font_name in (
+        "TkDefaultFont",
+        "TkTextFont",
+        "TkFixedFont",
+        "TkMenuFont",
+        "TkHeadingFont",
+        "TkCaptionFont",
+        "TkSmallCaptionFont",
+        "TkIconFont",
+        "TkTooltipFont",
+    ):
+        try:
+            tkfont.nametofont(font_name).configure(family=family)
+        except Exception:
+            pass
+
+
 PINK = {
     "window": "#fdeaf3",
     "panel": "#f8dbe8",
@@ -84,6 +129,8 @@ class EffectSorterApp(DnDCTk):
     def __init__(self):
         super().__init__()
         self.title("エフェクト素材仕分けツール")
+        self._ui_font_family = _register_ui_font()
+        _apply_tk_default_font(self._ui_font_family)
         self.geometry("1200x780")
         self.resizable(True, True)
         self.configure(fg_color=PINK["window"])
@@ -150,7 +197,7 @@ class EffectSorterApp(DnDCTk):
         ctk.CTkLabel(left, text="class", anchor="w").grid(
             row=0, column=0, sticky="w", padx=8, pady=(8, 0)
         )
-        self._class_frame = ctk.CTkFrame(left, fg_color="transparent", width=170)
+        self._class_frame = ctk.CTkScrollableFrame(left, fg_color="transparent", width=170)
         self._class_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
         self._class_frame.grid_propagate(False)
         self._class_frame.columnconfigure((0, 1), weight=1)
