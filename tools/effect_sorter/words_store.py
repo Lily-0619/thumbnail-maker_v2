@@ -18,9 +18,14 @@ import json
 import os
 import tempfile
 
-from . import paths
+from . import naming, paths
 
 _EMPTY = {"effect1": {}, "effect2": []}
+
+# 仕分け済みフォルダ走査の対象外（作業用フォルダ）
+_NON_SORTED_DIRS = {"_unsorted", "_hold", "_trash"}
+# ディスク走査結果のキャッシュ（毎回 rglob すると重いので保持）
+_disk_cache = None
 
 
 def load() -> dict:
@@ -84,11 +89,72 @@ def add_effect2(word: str):
     _atomic_write(paths.WORDS_JSON, data)
 
 
+def _scan_disk_history() -> dict:
+    """material/effect 下の確定済みファイル名から履歴を復元する。
+
+    履歴JSON(config/effect_sorter_words.json)を失っても、実際に仕分け済みの
+    ファイル名 `class__pos__effect①__effect②__連番.png` から effect①(クラス別)・
+    effect②(共通) を復元できるようにする。失敗時は空構造を返す。
+    """
+    effect1: dict[str, list] = {}
+    effect2: list = []
+    base = paths.EFFECT_DIR
+    if not base.exists():
+        return {"effect1": effect1, "effect2": effect2}
+    try:
+        for p in base.rglob("*.png"):
+            rel = p.relative_to(base).parts
+            if rel and rel[0] in _NON_SORTED_DIRS:
+                continue
+            tokens = p.name[:-4].split(naming.SEP)  # ".png" を除いて分割
+            if len(tokens) < 5 or not tokens[-1].isdigit():
+                continue
+            cls, _pos, e1, e2 = tokens[0], tokens[1], tokens[2], tokens[3]
+            bucket = effect1.setdefault(cls, [])
+            if e1 not in bucket:
+                bucket.append(e1)
+            if e2 not in effect2:
+                effect2.append(e2)
+    except OSError:
+        pass
+    return {"effect1": effect1, "effect2": effect2}
+
+
+def _disk_history(force: bool = False) -> dict:
+    global _disk_cache
+    if _disk_cache is None or force:
+        _disk_cache = _scan_disk_history()
+    return _disk_cache
+
+
+def refresh_disk_history():
+    """ディスク走査キャッシュを作り直す（仕分け済みフォルダを直接整理した後など）。"""
+    _disk_history(force=True)
+
+
+def _merge_unique(*lists) -> list:
+    """複数リストを順序を保ちつつ重複なしで結合し、見やすいよう整列して返す。"""
+    seen = set()
+    out = []
+    for lst in lists:
+        for item in lst:
+            if item and item not in seen:
+                seen.add(item)
+                out.append(item)
+    return sorted(out)
+
+
 def effect1_for(cls: str):
-    """指定クラスの effect① 履歴リストを返す。"""
-    return list(load()["effect1"].get(cls, []))
+    """指定クラスの effect① 履歴リストを返す（JSON＋ディスク復元をマージ）。"""
+    return _merge_unique(
+        load()["effect1"].get(cls, []),
+        _disk_history()["effect1"].get(cls, []),
+    )
 
 
 def effect2_all():
-    """共通の effect② 履歴リストを返す。"""
-    return list(load()["effect2"])
+    """共通の effect② 履歴リストを返す（JSON＋ディスク復元をマージ）。"""
+    return _merge_unique(
+        load()["effect2"],
+        _disk_history()["effect2"],
+    )

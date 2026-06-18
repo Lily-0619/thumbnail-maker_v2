@@ -153,6 +153,8 @@ class EffectSorterApp(DnDCTk):
 
         self._class_buttons = []
         self._pos_buttons = {}
+        self._translate_buttons = []  # 翻訳中に一括で無効化するため保持
+        self._translating = False  # 翻訳の多重実行を防ぐ
 
         self._build_layout()
         self._enable_dnd()
@@ -221,11 +223,13 @@ class EffectSorterApp(DnDCTk):
         )
         e1entry = ctk.CTkEntry(e1col, textvariable=self.effect1)
         e1entry.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
-        ctk.CTkButton(
+        e1_btn = ctk.CTkButton(
             e1col, text="Ollamaで日本語→英語", height=26,
-            command=lambda: self._translate_field(self.effect1),
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
-        ).grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        )
+        e1_btn.configure(command=lambda: self._translate_field(self.effect1, e1_btn))
+        e1_btn.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        self._translate_buttons.append(e1_btn)
         ctk.CTkLabel(
             e1col,
             textvariable=self.ollama_status,
@@ -246,11 +250,13 @@ class EffectSorterApp(DnDCTk):
         )
         e2entry = ctk.CTkEntry(e2col, textvariable=self.effect2)
         e2entry.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
-        ctk.CTkButton(
+        e2_btn = ctk.CTkButton(
             e2col, text="Ollamaで日本語→英語", height=26,
-            command=lambda: self._translate_field(self.effect2),
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
-        ).grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        )
+        e2_btn.configure(command=lambda: self._translate_field(self.effect2, e2_btn))
+        e2_btn.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        self._translate_buttons.append(e2_btn)
         ctk.CTkLabel(
             e2col,
             textvariable=self.ollama_status,
@@ -320,12 +326,22 @@ class EffectSorterApp(DnDCTk):
         threading.Thread(target=self._ollama_startup_worker, daemon=True).start()
 
     def _ollama_startup_worker(self):
+        def report(msg):
+            # 別スレッドからの更新はメインスレッドへ渡す
+            self.after(0, self.ollama_status.set, f"⏳ {msg}")
+
         try:
-            message = translate.ensure_ollama_ready(start_if_needed=True)
+            message = translate.prepare_ollama(progress=report)
             self.after(0, self.ollama_status.set, f"✅ {message}")
         except translate.OllamaStartupError as e:
-            self.after(0, self.ollama_status.set, "⚠️ Ollama起動に失敗")
-            self.after(0, messagebox.showwarning, "Ollama Startup", str(e))
+            # 失敗してもアプリは使える（翻訳は辞書フォールバックに切り替わる）。
+            # モーダルで止めず、状況だけ表示する。
+            self.after(
+                0,
+                self.ollama_status.set,
+                "⚠️ Ollama未準備（翻訳は辞書で代替します）",
+            )
+            print(f"[Ollama] startup not ready: {e}")
 
     # ──────────────────────────────────────────
     #  D&D
@@ -524,23 +540,55 @@ class EffectSorterApp(DnDCTk):
     #  翻訳
     # ──────────────────────────────────────────
 
-    def _translate_field(self, var):
+    def _translate_field(self, var, button):
+        """翻訳は時間がかかるので別スレッドで実行し、UIを固めない。"""
         text = var.get().strip()
         if not text:
             return
+        if self._translating:
+            return
+        self._translating = True
+        self._set_translate_buttons_enabled(False)
+        self._translate_labels = {b: b.cget("text") for b in self._translate_buttons}
+        button.configure(text="変換中…")
+        self.ollama_status.set("⏳ 変換中…")
+        threading.Thread(
+            target=self._translate_worker, args=(text, var), daemon=True
+        ).start()
+
+    def _translate_worker(self, text, var):
         try:
             result, changed = translate.translate(text)
+            self.after(0, self._translate_done, var, result, changed, None)
         except translate.TranslationError as e:
-            messagebox.showwarning("Ollama翻訳エラー", str(e))
+            self.after(0, self._translate_done, var, None, False, str(e))
+
+    def _translate_done(self, var, result, changed, error):
+        self._translating = False
+        self._set_translate_buttons_enabled(True)
+        for b, label in getattr(self, "_translate_labels", {}).items():
+            try:
+                b.configure(text=label)
+            except Exception:
+                pass
+
+        if error:
+            self.ollama_status.set("⚠️ 変換に失敗")
+            messagebox.showwarning("翻訳エラー", error)
             return
         if changed:
             var.set(result)
+            self.ollama_status.set("✅ 変換しました")
         else:
-            messagebox.showinfo(
-                "翻訳できませんでした",
-                f"「{text}」をOllamaで翻訳できませんでした。\n"
-                "Ollamaが起動しているか確認してください。",
-            )
+            self.ollama_status.set("変換できませんでした")
+
+    def _set_translate_buttons_enabled(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        for b in self._translate_buttons:
+            try:
+                b.configure(state=state)
+            except Exception:
+                pass
 
     # ──────────────────────────────────────────
     #  タイトル欄
