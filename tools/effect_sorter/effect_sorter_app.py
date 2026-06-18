@@ -199,7 +199,6 @@ class EffectSorterApp(DnDCTk):
         )
         self._class_frame = ctk.CTkScrollableFrame(left, fg_color="transparent", width=170)
         self._class_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-        self._class_frame.grid_propagate(False)
         self._class_frame.columnconfigure((0, 1), weight=1)
 
         pos_frame = ctk.CTkFrame(left, fg_color="transparent")
