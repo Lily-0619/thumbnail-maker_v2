@@ -11,10 +11,11 @@ widgets.py
 CTkImage は参照を保持しないとサムネが消えるため self._thumb_refs に退避する。
 """
 
+import tkinter
 from pathlib import Path
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -62,14 +63,21 @@ class ZoomWindow(ctk.CTkToplevel):
 
 
 class PreviewPanel(ctk.CTkFrame):
-    """選択中画像を大きく表示。右上に拡大ボタン。"""
+    """選択中画像を大きく表示。右上に拡大ボタン。
+
+    画像表示は素の tkinter.Label + ImageTk.PhotoImage を使う。
+    CustomTkinter 5.2.x の CTkLabel は image=None で内部ラベルの画像を
+    クリアできず（_update_image が None を無視する）、2枚目以降の差し替えで
+    表示が崩れる。そのため本体 ui/preview.py と同じく ImageTk 方式にする。
+    """
 
     PREVIEW_SIZE = (360, 270)
+    PLACEHOLDER = "未分類画像を選択してください"
 
     def __init__(self, parent):
         super().__init__(parent)
         self._current_path = None
-        self._img_ref = None
+        self._photo = None  # ImageTk.PhotoImage 参照保持（GCで消えないように）
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=6, pady=(6, 0))
@@ -79,31 +87,35 @@ class PreviewPanel(ctk.CTkFrame):
         )
         self._zoom_btn.pack(side="right")
 
-        self._image_label = ctk.CTkLabel(
-            self, text="未分類画像を選択してください", width=self.PREVIEW_SIZE[0],
-            height=self.PREVIEW_SIZE[1],
+        self._image_label = tkinter.Label(
+            self, text=self.PLACEHOLDER, bd=0, highlightthickness=0
         )
         self._image_label.pack(expand=True, fill="both", padx=6, pady=6)
+        self._apply_bg()
+
+    def _apply_bg(self):
+        """親フレームの色に合わせて、tkラベルの背景が浮かないようにする。"""
+        try:
+            bg = self._apply_appearance_mode(self.cget("fg_color"))
+            self._image_label.configure(bg=bg, fg=self._apply_appearance_mode(("#6b3b52", "#dddddd")))
+        except Exception:
+            pass
 
     def show(self, path):
-        """指定パスの画像をプレビューに表示する。"""
+        """指定パスの画像をプレビューに表示する（何度差し替えても確実に更新）。"""
         path = Path(path) if path else None
         self._current_path = path
-        self._image_label.configure(image=None, text="")
-        self._image_label.update_idletasks()
         if path is None or not path.exists():
-            self._img_ref = None
-            self._image_label.configure(image=None, text="未分類画像を選択してください")
+            self._photo = None
+            self._image_label.configure(image="", text=self.PLACEHOLDER)
             return
         thumb = load_thumbnail(path, self.PREVIEW_SIZE)
         if thumb is None:
-            self._img_ref = None
-            self._image_label.configure(image=None, text="画像を開けませんでした")
+            self._photo = None
+            self._image_label.configure(image="", text="画像を開けませんでした")
             return
-        self._img_ref = ctk.CTkImage(
-            light_image=thumb, dark_image=thumb, size=self.PREVIEW_SIZE
-        )
-        self._image_label.configure(image=self._img_ref, text="")
+        self._photo = ImageTk.PhotoImage(thumb)
+        self._image_label.configure(image=self._photo, text="")
 
     def _open_zoom(self):
         if self._current_path and self._current_path.exists():

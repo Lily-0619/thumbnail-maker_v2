@@ -47,17 +47,43 @@ class OllamaStartupError(Exception):
     """Ollama起動確認に失敗したときのユーザー向けエラー。"""
 
 
-# 無ければ生成する初期辞書（§8-1）
+# 同梱辞書（Ollama不調時のフォールバック）。常に load() の土台として使われ、
+# ユーザーの config/effect_sorter_dict.json があればそれで上書き・追加できる。
+# ゲームVFXでよく使う日本語→英語キーを広めに収録。
 _INITIAL_DICT = {
-    "蓮": "lotus",
-    "蝶": "butterfly",
-    "雷": "thunder",
-    "氷": "ice",
-    "花": "flower",
-    "光": "light",
-    "闇": "dark",
-    "霧": "mist",
-    "煙": "smoke",
+    # ── 属性・元素 ──
+    "炎": "fire", "火": "fire", "火炎": "flame", "焔": "flame", "炎上": "blaze",
+    "氷": "ice", "霜": "frost", "雪": "snow",
+    "雷": "lightning", "稲妻": "lightning", "雷撃": "lightning", "落雷": "lightning", "電撃": "shock",
+    "風": "wind", "嵐": "storm", "竜巻": "tornado",
+    "水": "water", "波": "wave", "波動": "wave", "泡": "bubble", "雫": "drop", "滴": "drop",
+    "土": "earth", "岩": "rock", "石": "stone", "砂": "sand", "溶岩": "lava",
+    "光": "light", "閃光": "flash", "光輪": "halo", "輝き": "shine", "煌めき": "sparkle",
+    "きらめき": "sparkle", "輝": "shine",
+    "闇": "dark", "暗黒": "dark", "影": "shadow", "黒煙": "smoke",
+    "毒": "poison", "聖": "holy", "神聖": "holy", "呪い": "curse", "呪": "curse", "邪": "evil",
+    "血": "blood",
+    # ── 自然・生き物 ──
+    "花": "flower", "桜": "sakura", "蓮": "lotus", "葉": "leaf", "木": "tree",
+    "星": "star", "月": "moon", "太陽": "sun", "雲": "cloud", "虹": "rainbow",
+    "蝶": "butterfly", "羽": "feather", "翼": "wing", "鳥": "bird",
+    "龍": "dragon", "竜": "dragon", "蛇": "snake", "狼": "wolf",
+    # ── 形・エフェクト ──
+    "円": "circle", "輪": "ring", "環": "ring", "渦": "vortex", "螺旋": "spiral",
+    "爆発": "explosion", "衝撃": "shockwave", "衝撃波": "shockwave",
+    "斬": "slash", "斬撃": "slash", "粒子": "particle", "オーラ": "aura",
+    "魔法": "magic", "魔法陣": "magic_circle", "結界": "barrier", "障壁": "barrier",
+    "盾": "shield", "剣": "sword", "矢": "arrow", "弾": "bullet",
+    "軌跡": "trail", "残像": "afterimage", "火花": "spark", "煙": "smoke",
+    "霧": "mist", "塵": "dust", "結晶": "crystal", "宝石": "gem",
+    "鎖": "chain", "棘": "thorn", "炎柱": "fire_pillar",
+    # ── 色 ──
+    "赤": "red", "青": "blue", "緑": "green", "黄": "yellow", "紫": "purple",
+    "白": "white", "黒": "black", "金": "gold", "銀": "silver",
+    "桃": "pink", "ピンク": "pink", "橙": "orange",
+    # ── カタカナ語 ──
+    "ドラゴン": "dragon", "バリア": "barrier", "オーロラ": "aurora",
+    "スパーク": "spark", "フレア": "flare", "ビーム": "beam", "レーザー": "laser",
 }
 
 
@@ -68,17 +94,21 @@ def ensure_file():
 
 
 def load() -> dict:
-    """辞書を読む。無ければ初期辞書を返す。"""
-    if not paths.DICT_JSON.exists():
-        return dict(_INITIAL_DICT)
-    try:
-        with open(paths.DICT_JSON, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except (json.JSONDecodeError, OSError):
-        pass
-    return dict(_INITIAL_DICT)
+    """辞書を読む。同梱辞書を土台に、ユーザー辞書(JSON)があれば上書き・追加する。
+
+    こうすることで、過去に小さい辞書ファイルが生成済みでも、同梱辞書の拡充分が
+    常に使えるようになる（ユーザーが追記した語はそのまま優先）。
+    """
+    merged = dict(_INITIAL_DICT)
+    if paths.DICT_JSON.exists():
+        try:
+            with open(paths.DICT_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                merged.update(data)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return merged
 
 
 def _atomic_write(path, data):
@@ -333,7 +363,7 @@ def translate_via_dict(text: str):
     既知の語を含む部分一致で連結する。
     戻り値: (変換後文字列, 変換できたか bool)
     """
-    text = (text or "").strip()
+    text = (text or "").strip().replace(" ", "").replace("　", "")
     if not text:
         return "", False
     table = load()
@@ -344,10 +374,23 @@ def translate_via_dict(text: str):
         if key:
             return key, True
 
-    # 2) 部分一致（既知の語が含まれていれば連結する）
-    found = [en for jp, en in table.items() if jp and jp in text]
-    if found:
-        key = normalize_key("_".join(found))
+    # 2) 部分一致：長い語を優先して重複なく拾い、出現順に連結する。
+    #    例「炎の蝶」→ fire_butterfly（「の」は未知なので無視）。
+    used = [False] * len(text)
+    matches = []  # (出現位置, 英語)
+    for jp in sorted(table, key=len, reverse=True):
+        if not jp:
+            continue
+        start = text.find(jp)
+        while start != -1:
+            if not any(used[start:start + len(jp)]):
+                matches.append((start, table[jp]))
+                for i in range(start, start + len(jp)):
+                    used[i] = True
+            start = text.find(jp, start + 1)
+    if matches:
+        matches.sort()
+        key = normalize_key("_".join(en for _pos, en in matches))
         if key:
             return key, True
 
