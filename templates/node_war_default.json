@@ -57,7 +57,7 @@
   },
   "character": {
     "position": "right",
-    "scale": 1.0,
+    "scale": 0.7,
     "offset_x": 500,
     "offset_y": 0
   },
