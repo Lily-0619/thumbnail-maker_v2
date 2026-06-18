@@ -15,10 +15,12 @@ import io
 import json
 import os
 import random
+import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -130,6 +132,135 @@ def ensure_ready(config: dict, start_if_needed: bool = True) -> str:
             f"ComfyUI を起動しましたが {startup_timeout} 秒以内に接続できませんでした（{url}）。\n"
             "初回起動が遅い場合は ai_config.json の comfyui.startup_timeout_seconds を増やしてください。"
         )
+
+
+# ──────────────────────────────────────────
+#  停止・再起動
+# ──────────────────────────────────────────
+#
+# ComfyUI は「起動した時点」のモデル/LoRAフォルダしか見ない。後から
+# .safetensors を足しても、稼働中のプロセスは再スキャンしないことがある。
+# その場合は ComfyUI を一度落として起動し直すのが確実なので、その操作を
+# ここで提供する（GUI の「ComfyUI 再起動」ボタンから呼ばれる）。
+
+
+def _port_from_url(url: str) -> int | None:
+    try:
+        parsed = urlparse(url)
+        if parsed.port:
+            return parsed.port
+        return 443 if parsed.scheme == "https" else 80
+    except ValueError:
+        return None
+
+
+def _pids_listening_on(port: int) -> list[int]:
+    """指定ポートを LISTENING しているプロセスの PID を netstat から拾う（Windows）。
+
+    ポートで特定するので「ComfyUI を起動したのが誰か」に関係なく当てられる。
+    比較ツール自身の python は別ポートを使わない（HTTPクライアントなので
+    LISTENING しない）ため、巻き込んで落とす心配はない。
+    """
+    if os.name != "nt":
+        return []
+    try:
+        proc = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    needle = f":{port}"
+    pids: set[int] = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        # 例: TCP  127.0.0.1:8188  0.0.0.0:0  LISTENING  34600
+        if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[-2].upper() == "LISTENING":
+            if parts[1].endswith(needle):
+                try:
+                    pids.add(int(parts[-1]))
+                except ValueError:
+                    pass
+    return list(pids)
+
+
+def _kill_pid(pid: int) -> None:
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+
+
+def stop(config: dict, timeout: int = 15) -> bool:
+    """稼働中の ComfyUI を停止する。
+
+    このセッションが起動した分（_PROCESS）に加え、ポートを掴んでいる
+    プロセスも止める（前回セッションや手動起動も拾えるように）。
+
+    Returns:
+        timeout 以内に接続不可（=停止）になったら True。
+    """
+    cfg = config.get("comfyui", {})
+    url = comfy_url(cfg)
+
+    global _PROCESS
+    if _PROCESS is not None:
+        try:
+            if _PROCESS.poll() is None:
+                _PROCESS.terminate()
+        except OSError:
+            pass
+        _PROCESS = None
+
+    port = _port_from_url(url)
+    if port:
+        for pid in _pids_listening_on(port):
+            _kill_pid(pid)
+
+    deadline = time.time() + max(timeout, 1)
+    while time.time() < deadline:
+        if not is_running(url, timeout=2):
+            return True
+        time.sleep(0.5)
+    return not is_running(url, timeout=2)
+
+
+def restart(config: dict) -> str:
+    """ComfyUI を停止 → 起動し直して、追加したモデル/LoRA を再スキャンさせる。"""
+    cfg = config.get("comfyui", {})
+    url = comfy_url(cfg)
+
+    if not cfg.get("auto_start", False):
+        raise ComfyError(
+            "自動起動が無効のため再起動できません（ai_config.json の comfyui.auto_start が false）。\n"
+            "ComfyUI を手動で終了→起動してから『接続 / 一覧更新』を押してください。"
+        )
+
+    if not stop(config):
+        raise ComfyError(
+            "稼働中の ComfyUI を停止できませんでした。\n"
+            f"ポート（{url}）を使っているプロセスを手動で終了してから、もう一度お試しください。"
+        )
+
+    # 起動は ensure_ready の auto_start ロジックを再利用する。
+    msg = ensure_ready(config, start_if_needed=True)
+    return msg.replace("自動起動しました", "再起動しました")
 
 
 # ──────────────────────────────────────────
