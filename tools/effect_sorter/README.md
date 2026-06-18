@@ -28,16 +28,27 @@ pip install -r tools/effect_sorter/requirements.txt
 
 effect① / effect② の **「Ollamaで日本語→英語」** ボタンは、ローカルの Ollama を使います。
 
-アプリ起動時に Ollama の接続確認を行い、起動していなければ `ollama serve` を自動実行します。
+起動時に Ollama の準備（接続確認 → モデル確認 → 先読み）を**バックグラウンドで**行うので、
+画面が固まりません。翻訳ボタンも別スレッドで動き、待機中は「変換中…」表示になります。
+
+- 起動していなければ `ollama serve` を自動実行します。
+- 使うモデルが未取得なら自動で `pull` します（初回のみDLが走ります）。
+- Ollama が使えないときは、**同梱辞書（`config/effect_sorter_dict.json`）で代替**して止まりません。
 
 1. Ollama をインストールしておく
-2. 使うモデルを入れる（例: `ollama pull llama3.1`）
+2. （任意）使うモデルを入れる（例: `ollama pull llama3.1`。未取得でも自動pullされます）
 3. 必要なら環境変数で変更する
    - `OLLAMA_URL`（標準: `http://127.0.0.1:11434`）
    - `OLLAMA_MODEL`（標準: `llama3.1`）
    - `OLLAMA_START_COMMAND`（標準: `ollama serve`）
    - `OLLAMA_EXE`（PATHに無い場合の `ollama.exe` の場所）
    - `OLLAMA_AUTO_START`（`0` / `false` / `no` で自動起動しない）
+   - `OLLAMA_AUTO_PULL`（`0` / `false` / `no` で自動pullしない）
+   - `OLLAMA_PULL_TIMEOUT_SECONDS`（モデルDLの待ち上限。標準 `1800`）
+
+> **履歴について**: effect① / effect② の履歴は `config/effect_sorter_words.json` に加えて、
+> `material/effect/` 内の**仕分け済みファイル名からも自動復元**します。履歴JSONを失っても、
+> すでに仕分けた実ファイルがあれば履歴に出ます。
 
 ## 連続仕分け（スキップ / 保留 / 削除）
 
