@@ -3,9 +3,12 @@
 黒い砂漠モバイルのノードウォー用サムネイルを生成するアプリです。
 
 - 起動: `python main.py`（Windowsは `起動.bat`）
+- **使い方の総合マニュアル（操作＋設定＋AI）** → [docs/操作説明書.md](docs/操作説明書.md)
 - **AI画像生成（背景＋後方エフェクト）のセットアップと使い方** → [docs/AI画像生成_やり方説明書.md](docs/AI画像生成_やり方説明書.md)
   - ローカルの **ComfyUI** を使用。APIキー不要・無料・全部ローカルで動く
   - sdwebui（AUTOMATIC1111）/ Stability AI / OpenAI への切り替えも可
+- **LoRA学習（自分のキャラ・画風・エフェクトを覚えさせる）** → [docs/LoRA学習_やり方説明書.md](docs/LoRA学習_やり方説明書.md)
+  - 無料ツール **kohya_ss** を使用。SD1.5 なら RTX 3060 Ti（8GB）でも学習可能
 - AIの設定: `config/ai_config.json` / プロンプト調整: `config/ai_prompts.json`
 
 ## 各種ファイル情報
