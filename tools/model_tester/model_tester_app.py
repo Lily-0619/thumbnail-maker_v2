@@ -261,6 +261,10 @@ class ModelTesterApp(ctk.CTk):
         self._refresh_btn = ctk.CTkButton(parent, text="接続 / 一覧更新", command=self._connect_and_list,
                                            fg_color=PINK["accent"], hover_color=PINK["button_hover"])
         self._refresh_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=(8, 2)); r += 1
+        self._restart_btn = ctk.CTkButton(parent, text="ComfyUI 再起動（モデル追加後）",
+                                           command=self._restart_comfy,
+                                           fg_color="#9a8aa0", hover_color="#7a6a85")
+        self._restart_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         self._gen_btn = ctk.CTkButton(parent, text="▶ 一括生成", command=self.on_generate,
                                       fg_color=PINK["button"], hover_color=PINK["button_hover"],
                                       font=ctk.CTkFont(size=14, weight="bold"), height=40)
@@ -333,6 +337,36 @@ class ModelTesterApp(ctk.CTk):
         self._lora_vars = new_lora_vars
 
         self.status.set(f"{msg}　モデル {len(ckpts)}個 / LoRA {len(loras)}個")
+
+    # ──────────────────────────────────────────
+    #  ComfyUI 再起動（モデル/LoRA を足した後の再スキャン用）
+    # ──────────────────────────────────────────
+
+    def _restart_comfy(self):
+        if self._busy:
+            return
+        if not messagebox.askyesno(
+            "ComfyUI 再起動",
+            "ComfyUI を再起動して、追加したモデル/LoRA を読み込み直します。\n"
+            "（生成中の処理があれば止まります）\n\n再起動しますか？",
+        ):
+            return
+        self._set_busy(True)
+        self.status.set("ComfyUI を再起動中...（30秒ほどかかります）")
+        threading.Thread(target=self._restart_worker, daemon=True).start()
+
+    def _restart_worker(self):
+        try:
+            msg = comfy_client.restart(self.config_data)
+            ckpts = comfy_client.list_checkpoints(self.url, timeout=20)
+            loras = comfy_client.list_loras(self.url, timeout=20)
+        except ComfyError as e:
+            self.after(0, self._on_connect_failed, str(e))
+            return
+        except Exception as e:  # 予期しない失敗でも落とさない
+            self.after(0, self._on_connect_failed, f"想定外のエラー: {e}")
+            return
+        self.after(0, self._populate_lists, ckpts, loras, msg)
 
     # ──────────────────────────────────────────
     #  入力読み取り
@@ -552,6 +586,7 @@ class ModelTesterApp(ctk.CTk):
         state = "disabled" if busy else "normal"
         self._gen_btn.configure(state=state)
         self._refresh_btn.configure(state=state)
+        self._restart_btn.configure(state=state)
 
 
 def params_strength(value: str) -> str:
