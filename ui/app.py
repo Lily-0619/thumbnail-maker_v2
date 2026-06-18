@@ -4,12 +4,15 @@ customtkinter main UI window.
 """
 
 import copy
+import ctypes
 import json
+import platform
 import re
 import threading
 from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox
+import tkinter.font as tkfont
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
@@ -61,6 +64,48 @@ ASSET_ELEMENT_LABELS = {
     "back_effect": "Back Effect",
 }
 # 言語別フォントの字体プレビューに使うサンプル文字（その言語の字形が出るもの）
+UI_FONT_FILE_NAME = "HachiMaruPop-Regular.ttf"
+UI_FONT_FAMILY = "Hachi Maru Pop"
+UI_FONT_CANDIDATES = (
+    Path("font/JP") / UI_FONT_FILE_NAME,
+    Path("D:/bdm-thumbnail_app_v02/font/JP") / UI_FONT_FILE_NAME,
+)
+
+
+def _register_ui_font() -> str:
+    """UI表示用フォントを登録し、CustomTkinterの既定フォント名を返す。"""
+    for font_path in UI_FONT_CANDIDATES:
+        if not font_path.exists():
+            continue
+        if platform.system() == "Windows":
+            try:
+                ctypes.windll.gdi32.AddFontResourceExW(str(font_path.resolve()), 0x10, 0)
+            except (AttributeError, OSError):
+                pass
+        ctk.ThemeManager.theme["CTkFont"]["family"] = UI_FONT_FAMILY
+        return UI_FONT_FAMILY
+    return ctk.ThemeManager.theme.get("CTkFont", {}).get("family", "Roboto")
+
+
+def _apply_tk_default_font(family: str) -> None:
+    """標準Tk系の文字にも同じフォントを適用する。"""
+    for font_name in (
+        "TkDefaultFont",
+        "TkTextFont",
+        "TkFixedFont",
+        "TkMenuFont",
+        "TkHeadingFont",
+        "TkCaptionFont",
+        "TkSmallCaptionFont",
+        "TkIconFont",
+        "TkTooltipFont",
+    ):
+        try:
+            tkfont.nametofont(font_name).configure(family=family)
+        except Exception:
+            pass
+
+
 FONT_SAMPLE_TEXT = {
     "ja": "あ亜 Ag",
     "ko": "가나 Ag",
@@ -74,8 +119,8 @@ class CharacterPickerDialog(ctk.CTkToplevel):
     """Grid thumbnail picker for character images."""
 
     CHAR_DIR = Path("material/character")
-    THUMB_SIZE = (96, 96)
-    COLS = 4
+    THUMB_SIZE = (67, 67)
+    COLS = 5
 
     def __init__(self, parent, on_select):
         super().__init__(parent)
@@ -123,8 +168,8 @@ class CharacterPickerDialog(ctk.CTkToplevel):
                 image=ctk_img,
                 text=name[:14],
                 compound="top",
-                width=116,
-                height=128,
+                width=82,
+                height=90,
                 command=lambda p=path: self._pick(p),
             )
             btn.grid(row=row_idx, column=col_idx, padx=4, pady=4)
@@ -140,6 +185,8 @@ class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("BDM Thumbnail Generator v0.2.5")
+        self._ui_font_family = _register_ui_font()
+        _apply_tk_default_font(self._ui_font_family)
         self.geometry("1500x900")
         self.resizable(True, True)
 
@@ -467,7 +514,7 @@ class ThumbnailApp(ctk.CTk):
         ctk.CTkLabel(parent, text="📐 Character Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.char_x = self._build_number_row(parent, "Character X", "500")
         self.char_y = self._build_number_row(parent, "Character Y", "0")
-        self.char_scale = self._build_number_row(parent, "Scale", "1.0")
+        self.char_scale = self._build_number_row(parent, "Scale", "0.7")
 
         ctk.CTkLabel(parent, text="🌟 Back Effect Position & Size", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", **pad)
         self.effect_x = self._build_number_row(parent, "Effect X", "0")
@@ -898,7 +945,7 @@ class ThumbnailApp(ctk.CTk):
         char_cfg = self.current_template.get("character", {})
         self._set_entry(self.char_x, char_cfg.get("offset_x", 500))
         self._set_entry(self.char_y, char_cfg.get("offset_y", 0))
-        self._set_entry(self.char_scale, char_cfg.get("scale", 1.0))
+        self._set_entry(self.char_scale, char_cfg.get("scale", 0.7))
 
         effect_cfg = self.current_template.get("back_effect", self.current_template.get("effect", {}))
         self._set_entry(self.effect_x, effect_cfg.get("x", 0))
@@ -1132,7 +1179,7 @@ class ThumbnailApp(ctk.CTk):
                 "position": "right",
                 "offset_x": self._int_value(self.char_x, 500),
                 "offset_y": self._int_value(self.char_y, 0),
-                "scale": self._float_value(self.char_scale, 1.0),
+                "scale": self._float_value(self.char_scale, 0.7),
             }
         )
         template.setdefault("back_effect", {}).update(
