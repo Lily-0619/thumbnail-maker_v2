@@ -211,7 +211,16 @@ cd /d E:\bdm-thumbnail_app_v02
 | `auto_start` | アプリ起動時にComfyUIを自動起動するか | `true` |
 | `python_path` / `main_path` / `working_dir` | 自動起動に使うComfyUIの場所 | 自分のPCのComfyUIに合わせる |
 | `startup_timeout_seconds` | 自動起動後の接続待ち時間 | 初回起動が遅いなら増やす |
-| `timeout_seconds` | 待ち時間の上限 | 遅いなら600などに増やす |
+| `timeout_seconds` | 待ち時間の上限 | hiresで時間が倍増。遅いなら600などに増やす |
+| `hires.enabled` | 背景の高解像度化（ぼやけ防止） | `true`=くっきり / `false`=従来・速い |
+| `hires.target_width` | 仕上がりの横幅 | `1536`標準 / `1920`が理想 / 落ちるなら`1280` |
+| `hires.mode` | 拡大方式 | `latent`=モデル不要・標準 / `model`=ESRGAN等が必要 |
+| `hires.denoise` | 2パス目の描き直し量 | 0.3=元に忠実 〜 0.6=ディテール増 |
+
+> **背景のぼやけ対策（hires）**：背景は `width/height`（例 768×432）で作られ、合成時に 1920×1080 へ
+> 引き伸ばされるためぼやけます。`hires.enabled` を `true` にすると、生成側で `target_width` まで
+> 描き直して大きく作るので、仕上がりがくっきりします（標準でON）。GPUメモリが足りずに落ちる場合は
+> `target_width` を下げてください。
 
 ※ JSONファイルは「`"` や `,` を消してしまう」と壊れるので、**文章や数字の中身だけ**書き換えてください。
 
@@ -223,7 +232,8 @@ cd /d E:\bdm-thumbnail_app_v02
 |---|---|---|
 | ComfyUIに接続できません | ComfyUIを起動していない / 自動起動パスが違う | 手動で起動するか、`config/ai_config.json` の `python_path` / `main_path` / `working_dir` を確認 |
 | モデル(checkpoint)が見つかりません | モデル未配置 | 手順②で `models\checkpoints\` に `.safetensors` を入れる |
-| CUDA out of memory(黒い画面に赤字) | GPUメモリ不足 | `width/height` を下げる。SDXLなら軽いSD1.5系モデルに変える |
+| CUDA out of memory(黒い画面に赤字) | GPUメモリ不足 | `width/height` または `hires.target_width` を下げる。SDXLなら軽いSD1.5系モデルに変える |
+| AI背景がぼやける | 引き伸ばし（hiresが無効/目標が低い） | `comfyui.hires.enabled` を `true`、`target_width` を 1536〜1920 に |
 | タイムアウトしました | 生成が遅い | `config/ai_config.json` の `comfyui` の `timeout_seconds` を 600 に増やす |
 | エフェクトの抜けが汚い | 暗い色は透明扱いになるため | 炎・雷など発光系は得意。暗い色主体は `effect.types` の文に「bright」「glowing」を足す |
 | ポートが違うと言われる/つながらない | ComfyUIを別ポートで起動している | 黒い画面に出るURLを見て、`config/ai_config.json` の `comfyui.url` をそれに合わせる |
