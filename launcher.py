@@ -5,7 +5,7 @@ BDM ツールランチャー。
 起動すると、作りたい作業を選んで各ツールを開ける小さな画面を出す。
 
   - 🖼️ サムネ作成         : main.py（本体）
-  - 🎨 モデル / LoRA 比較  : tools/model_tester/model_tester_app.py
+  - 🎨 X/Y/Z プロット比較  : tools/model_tester/model_tester_app.py
   - 🗂️ 素材仕分け          : tools/effect_sorter/effect_sorter_app.py
 
 起動:
@@ -46,7 +46,7 @@ PINK = {
 # (ボタン名, 説明, 起動するスクリプト)
 TOOLS = [
     ("🖼️  サムネ作成", "日付・拠点・ギルド・キャラからサムネを作る本体アプリ", "main.py"),
-    ("🎨  モデル / LoRA 比較", "同じプロンプトを複数モデル × LoRA で一括生成して見比べる", "tools/model_tester/model_tester_app.py"),
+    ("🎨  X/Y/Z プロット比較", "モデル/LoRA/Steps/CFG/Sampler等をX/Y/Z軸で一括生成して見比べる", "tools/model_tester/model_tester_app.py"),
     ("🗂️  素材仕分け", "エフェクト素材を目視で仕分け・リネーム・移動する", "tools/effect_sorter/effect_sorter_app.py"),
 ]
 

@@ -22,7 +22,20 @@
     "cfg_scale": 7,
     "sampler_name": "euler",
     "scheduler": "normal",
-    "denoising_strength": 0.7
+    "denoising_strength": 0.7,
+
+    "_comment_hires": "背景の高解像度化(ぼやけ防止)。背景は width/height で小さく作られ、合成時に1920x1080へ引き伸ばされてぼやけるため、生成側で大きく作り直す。enabled=false で従来どおり(速い)。",
+    "_comment_hires_target": "target_width=仕上がりの横幅。1920が理想だが、VRAM不足(out of memory)で落ちる場合は 1536 や 1280 に下げる。target_width<=width なら何もしない。",
+    "_comment_hires_mode": "mode=latent(モデル不要・標準) / model(ESRGAN等のupscalerモデルが必要。upscaler にファイル名を指定)。",
+    "_comment_hires_denoise": "denoise=2パス目の描き直し量。0.3=元に忠実〜0.6=ディテール増。上げすぎると絵が変わる。",
+    "hires": {
+      "enabled": true,
+      "mode": "latent",
+      "target_width": 1536,
+      "steps": 12,
+      "denoise": 0.45,
+      "upscaler": ""
+    }
   },
 
   "sdwebui": {

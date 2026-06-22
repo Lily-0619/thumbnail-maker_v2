@@ -479,11 +479,13 @@ def _comfyui_build_workflow(
     width: int,
     height: int,
     init_image_name: str | None,
+    hires: dict | None = None,
 ) -> dict:
     """ComfyUIのAPI形式ワークフロー(ノードグラフ)を組み立てる。
 
     init_image_name が指定された場合は img2img(LoadImage→VAEEncode)、
     それ以外は txt2img(EmptyLatentImage)になる。
+    hires が有効なら、1パス目の後に高解像度化(2パス目)のノードを足す。
     """
     seed = random.randint(0, 2**63 - 1)
     workflow = {
@@ -519,7 +521,70 @@ def _comfyui_build_workflow(
             "class_type": "EmptyLatentImage",
             "inputs": {"width": width, "height": height, "batch_size": 1},
         }
+
+    if hires and hires.get("enabled"):
+        _apply_comfyui_hires(workflow, hires, width, height, cfg)
     return workflow
+
+
+def _apply_comfyui_hires(workflow: dict, hires: dict, width: int, height: int, cfg: dict) -> None:
+    """1パス目(KSampler '3')の後ろに高解像度化の2パス目を挿し込む(in-place)。
+
+    背景が 768x432 などで生成され、合成時に 1920x1080 へ引き伸ばされて
+    ぼやけるのを防ぐため、生成側で大きく作っておく。
+    既存ノード '3'(KSampler) '4'(Checkpoint) '6'/'7'(CLIP) '8'(VAEDecode) を前提に、
+    '8' の入力(samples)を 2パス目の出力に差し替える。ノードIDは 20番台を使う。
+    """
+    target_w = int(hires.get("target_width", 0) or 0)
+    scale = float(hires.get("scale", 0) or 0)
+    if target_w > 0:
+        scale = target_w / max(1, width)
+    if scale <= 1.01:
+        return  # 拡大不要
+
+    steps = int(hires.get("steps", 12))
+    denoise = float(hires.get("denoise", 0.45))
+    sampler = cfg.get("sampler_name", "euler")
+    scheduler = cfg.get("scheduler", "normal")
+    cfg_scale = cfg.get("cfg_scale", 7)
+    seed = workflow["3"]["inputs"]["seed"]
+    tw, th = _round8(int(width * scale)), _round8(int(height * scale))
+
+    upscaler = str(hires.get("upscaler", "")).strip()
+    if hires.get("mode", "latent") == "model" and upscaler:
+        # 1パス目をデコード→アップスケーラーモデルで拡大→目標サイズへ→再エンコード→2パス目
+        workflow["20"] = {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}
+        workflow["21"] = {"class_type": "UpscaleModelLoader", "inputs": {"model_name": upscaler}}
+        workflow["22"] = {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["21", 0], "image": ["20", 0]}}
+        workflow["23"] = {
+            "class_type": "ImageScale",
+            "inputs": {"upscale_method": "lanczos", "width": tw, "height": th, "crop": "disabled", "image": ["22", 0]},
+        }
+        workflow["24"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["23", 0], "vae": ["4", 2]}}
+        workflow["25"] = {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": seed, "steps": steps, "cfg": cfg_scale,
+                "sampler_name": sampler, "scheduler": scheduler, "denoise": denoise,
+                "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["24", 0],
+            },
+        }
+        workflow["8"]["inputs"]["samples"] = ["25", 0]
+    else:
+        # latent方式(モデル不要・標準): 潜在を拡大→2パス目KSampler
+        workflow["20"] = {
+            "class_type": "LatentUpscaleBy",
+            "inputs": {"upscale_method": "nearest-exact", "scale_by": scale, "samples": ["3", 0]},
+        }
+        workflow["21"] = {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": seed, "steps": steps, "cfg": cfg_scale,
+                "sampler_name": sampler, "scheduler": scheduler, "denoise": denoise,
+                "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["20", 0],
+            },
+        }
+        workflow["8"]["inputs"]["samples"] = ["21", 0]
 
 
 def _generate_comfyui(
@@ -527,10 +592,12 @@ def _generate_comfyui(
     negative: str,
     config: dict,
     init_image: Path | None = None,
+    hires: dict | None = None,
 ) -> Image.Image:
     """ローカルのComfyUIで画像を生成する。
 
     init_image を渡すと img2img になり、サンプル画像の雰囲気に寄せて生成する。
+    hires を渡すと、生成後に高解像度化(2パス目)を行う(ぼやけ防止)。
     """
     cfg = config.get("comfyui", {})
     url = _comfyui_url(cfg)
@@ -550,7 +617,7 @@ def _generate_comfyui(
         except Exception as e:
             raise AIImageError(f"参考画像のアップロードに失敗しました: {e}")
 
-    workflow = _comfyui_build_workflow(prompt, negative, cfg, ckpt_name, width, height, init_name)
+    workflow = _comfyui_build_workflow(prompt, negative, cfg, ckpt_name, width, height, init_name, hires=hires)
     client_id = f"bdm-{random.randint(0, 1_000_000)}"
 
     try:
@@ -656,7 +723,7 @@ def generate_background(node_name: str) -> Path:
     prompt, negative = build_background_prompt(node_name)
 
     if provider == "comfyui":
-        img = _generate_comfyui(prompt, negative, config)
+        img = _generate_comfyui(prompt, negative, config, hires=config.get("comfyui", {}).get("hires"))
     elif provider == "sdwebui":
         img = _generate_sdwebui(prompt, negative, config)
     elif provider == "stability":
@@ -724,6 +791,12 @@ def check_setup() -> str:
         cfg = config.get("comfyui", {})
         url = _comfyui_url(cfg)
         lines.append(f"・ComfyUI自動起動        : {'ON' if cfg.get('auto_start', False) else 'OFF'}")
+        hires = cfg.get("hires", {})
+        if hires.get("enabled"):
+            tgt = hires.get("target_width", 0)
+            lines.append(f"・背景の高解像度化(hires) : ON（{hires.get('mode', 'latent')} / 目標幅 {tgt}px）")
+        else:
+            lines.append("・背景の高解像度化(hires) : OFF")
         if cfg.get("auto_start", False):
             missing = [key for key in ("python_path", "main_path", "working_dir") if not str(cfg.get(key, "")).strip()]
             status = "OK" if not missing else f"NG({', '.join(missing)} が未設定)"
