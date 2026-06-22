@@ -2,10 +2,10 @@
   "_comment": "AI生成のプロンプト設定。文章は自由に書き換えてOK。{node_name}/{hint}/{style}/{type_desc} は自動で置き換わる。",
 
   "background": {
-    "_comment": "拠点名から連想されるリアルダークファンタジー調の背景。node_hintsに拠点ごとの描写を追加できる。",
-    "template": "A realistic dark fantasy landscape inspired by '{node_name}', a battlefield in a medieval fantasy world. {hint} Epic game key-art style background. Wide cinematic 16:9 composition, the left half kept relatively simple and dim so large golden title text can be placed over it. {style}",
-    "style": "photorealistic, dark fantasy, moody atmosphere, dramatic stormy sky, cinematic lighting, volumetric fog, highly detailed, no people, no characters, no text, no watermark",
-    "negative": "text, watermark, logo, people, characters, cartoon, anime, illustration, low quality, blurry, oversaturated",
+    "_comment": "拠点名から作る背景。『リアルとファンタジーの中間・書き込まれた高品質』を狙い、暗く汚くならないよう品質と明るさを重視。夜/暗めにしたい拠点は node_hints 側に書く。",
+    "template": "A highly detailed fantasy landscape inspired by '{node_name}', a location in an epic fantasy world. {hint} Epic game key-art / concept-art, wide cinematic 16:9 composition, the left side kept a little more open and uncluttered so large title text can sit over it. {style}",
+    "style": "masterpiece, best quality, ultra detailed, intricate details, sharp focus, crisp clean rendering, semi-realistic fantasy concept art, detailed digital painting, beautiful soft cinematic lighting, atmospheric depth, rich detailed colors, highly detailed scenery, no people, no characters, no text, no watermark",
+    "negative": "lowres, low quality, worst quality, blurry, out of focus, jpeg artifacts, noise, grainy, muddy, dull, washed out, flat lighting, deformed, distorted, ugly, messy, bad composition, text, watermark, logo, signature, people, character, hands",
     "node_hints": {
       "_default": "",
       "Ehwaz Hill": "A windswept grassy hill at dusk, ancient weathered runestones on the slope, distant war banners.",
@@ -51,8 +51,8 @@
   "effect": {
     "_comment": "キャラの後方に置く透過エフェクト。typesに新しい種類を追加すればUIのドロップダウンにも出る。",
     "template": "A single magical visual effect for a dark fantasy game character: {type_desc}. The effect only, centered, radiating outward like an aura behind a hero. No character, no person, no scenery, no background landscape. {style}",
-    "style": "glowing, luminous, translucent particles, dramatic, high detail, dark fantasy game VFX, key-art quality",
-    "negative": "character, person, face, body, scenery, landscape, text, watermark, frame, border, low quality",
+    "style": "masterpiece, best quality, highly detailed, glowing, luminous, translucent particles, dramatic, clean crisp render, fantasy game VFX, key-art quality",
+    "negative": "character, person, face, body, scenery, landscape, text, watermark, frame, border, low quality, blurry, jpeg artifacts, muddy, noise",
     "types": {
       "fire": "swirling orange and crimson flames with burning embers rising in a fierce vortex",
       "ice": "sharp blue ice crystals and frost shards exploding outward with freezing mist",
