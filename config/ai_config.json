@@ -6,7 +6,7 @@
   "comfyui": {
     "_comment": "ローカルのComfyUIを起動しておくこと(通常 http://127.0.0.1:8188 )。",
     "_comment_ckpt": "ckpt_name を空にすると、ComfyUIにあるモデルを自動採用する。特定モデルを使うならファイル名を書く(例: dreamshaper_8.safetensors)。",
-    "_comment_size": "SD1.5系モデルなら 768x432 程度。SDXL系モデルなら 1344x768 に上げてOK。8の倍数に自動調整される。",
+    "_comment_size": "現在はSDXL向けに 1344x768 を標準にしている。SD1.5系モデルを使う場合は 768x432 程度に下げる。8の倍数に自動調整される。",
     "_comment_reference": "denoising_strength: サンプル画像(material/サンプル)をどれだけ変化させるか。0.6=見本に近い 〜 0.8=大きく変化",
     "url": "http://127.0.0.1:8188",
     "auto_start": true,
@@ -15,13 +15,13 @@
     "working_dir": "E:/AI/ComfyUI-master",
     "startup_timeout_seconds": 90,
     "extra_args": [],
-    "ckpt_name": "",
-    "width": 768,
-    "height": 432,
-    "steps": 28,
-    "cfg_scale": 7,
-    "sampler_name": "euler",
-    "scheduler": "normal",
+    "ckpt_name": "albedobaseXL_v31Large.safetensors",
+    "width": 1344,
+    "height": 768,
+    "steps": 35,
+    "cfg_scale": 6,
+    "sampler_name": "dpmpp_2m",
+    "scheduler": "karras",
     "denoising_strength": 0.7,
 
     "_comment_hires": "背景の高解像度化(ぼやけ防止)。背景は width/height で小さく作られ、合成時に1920x1080へ引き伸ばされてぼやけるため、生成側で大きく作り直す。enabled=false で従来どおり(速い)。",
@@ -31,9 +31,9 @@
     "hires": {
       "enabled": true,
       "mode": "latent",
-      "target_width": 1536,
-      "steps": 12,
-      "denoise": 0.45,
+      "target_width": 1920,
+      "steps": 16,
+      "denoise": 0.4,
       "upscaler": ""
     }
   },
@@ -71,6 +71,6 @@
   "sample_dirs": ["material/サンプル", "material/sample", "material/samples"],
   "use_sample_reference": true,
 
-  "_comment_timeout": "生成待ちの上限秒数。GPUが遅い場合は大きくする。",
-  "timeout_seconds": 300
+  "_comment_timeout": "生成待ちの上限秒数。SDXL＋hiresは時間がかかるので長め。遅い/落ちる場合はさらに増やす。",
+  "timeout_seconds": 600
 }

@@ -1,18 +1,17 @@
 """
 model_tester_app.py
-A1111 風 X/Y/Z プロット比較ツール（ComfyUI バックエンド）。
+ComfyUI バックエンドの画像比較ツール。2つのモードを持つ。
+
+  - かんたんモード（既定）: プロンプト＋モデル＋アップスケール＋枚数だけ。
+    画像生成の仕組みがわからなくても、選んで押すだけで生成できる。
+  - ⚙️ 詳細（全機能）モード: A1111 風の X/Y/Z プロット。
+    X軸=列 / Y軸=行 / Z軸=複数グリッドに Checkpoint / LoRA / Steps / CFG /
+    Sampler / Seed / Prompt S/R などを割り当てて一括生成・比較できる（勉強用）。
+    LoRAスタック・Hires/アップスケール・clip skip・VAE上書き・img2img に対応。
 
 起動:
     python tools/model_tester/model_tester_app.py
 
-X 軸=列 / Y 軸=行 / Z 軸=グリッドを複数枚、という A1111 の「X/Y/Z plot」と同じ考え方で、
-Checkpoint / LoRA / Steps / CFG / Sampler / Seed / Prompt S/R などを自由に組み合わせて
-一括生成し、ラベル付きの比較グリッド画像にまとめる。
-
-定番機能を一通り搭載:
-  - LoRA スタック（複数 LoRA の重ねがけ・個別強度）
-  - Hires fix / アップスケール（latent ＋ アップスケーラーモデル）
-  - clip skip / VAE 上書き / img2img
 本体 ui/app.py と同じく CustomTkinter で書く。本体は一切変更しない。
 """
 
@@ -49,6 +48,7 @@ from tools.model_tester.xyz_plot import (  # noqa: E402
     AXIS_LABELS,
     AXIS_NONE,
     AXIS_PROMPT_SR,
+    AXIS_SEED,
     LIST_AXES,
     Axis,
     AxisError,
@@ -76,9 +76,15 @@ PINK = {
     "muted": "#9a8aa0",
 }
 
-LORA_SLOTS = 4               # ベース LoRA スタックの段数
+LORA_SLOTS = 4               # 詳細モードの LoRA スタック段数
 GRID_CELL = (320, 180)       # 保存グリッドの 1 セル（16:9 想定）
 PREVIEW_MAX_W = 760          # 結果プレビュー画像の最大幅
+
+MODE_SIMPLE = "かんたん"
+MODE_DETAIL = "⚙️ 詳細（全機能）"
+
+# かんたんモードのアップスケール既定値（latent 方式）
+SIMPLE_HIRES = dict(scale=1.5, steps=14, denoise=0.4)
 
 
 def short_label(name: str, limit: int = 30) -> str:
@@ -100,7 +106,7 @@ def slug(name: str) -> str:
 
 
 class ZoomWindow(ctk.CTkToplevel):
-    """グリッド画像を大きく表示する別ウィンドウ。"""
+    """画像を大きく表示する別ウィンドウ。"""
 
     def __init__(self, parent, path: Path, caption: str = ""):
         super().__init__(parent)
@@ -131,7 +137,7 @@ class ZoomWindow(ctk.CTkToplevel):
 class ModelTesterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("X/Y/Z プロット比較ツール（ComfyUI）")
+        self.title("画像生成 / 比較ツール（ComfyUI）")
         self.geometry("1360x900")
         self.configure(fg_color=PINK["window"])
 
@@ -145,17 +151,26 @@ class ModelTesterApp(ctk.CTk):
         self.loras: list[str] = []
         self.vaes: list[str] = []
         self.upscalers: list[str] = []
-        self.samplers: list[str] = ["euler"]
-        self.schedulers: list[str] = ["normal"]
+        self.samplers: list[str] = [self.cfg.get("sampler_name", "euler")]
+        self.schedulers: list[str] = [self.cfg.get("scheduler", "normal")]
 
-        # ── ベース設定の状態変数 ──
+        # ── モード ──
+        self.mode = ctk.StringVar(value=MODE_SIMPLE)
+
+        # ── 共通：プロンプト・モデル ──
+        self.v_ckpt = ctk.StringVar(value="")
+
+        # ── かんたんモード ──
+        self.v_upscale = ctk.BooleanVar(value=True)
+        self.v_count = ctk.StringVar(value="1")
+
+        # ── 詳細モードのベース設定（軸にしない既定値。隠れていても値は保持）──
         self.v_steps = ctk.StringVar(value=str(self.cfg.get("steps", 28)))
         self.v_cfg = ctk.StringVar(value=str(self.cfg.get("cfg_scale", 7)))
         self.v_width = ctk.StringVar(value=str(self.cfg.get("width", 768)))
         self.v_height = ctk.StringVar(value=str(self.cfg.get("height", 432)))
         self.v_seed = ctk.StringVar(value="")
         self.v_clip = ctk.StringVar(value="1")
-        self.v_ckpt = ctk.StringVar(value="")
         self.v_vae = ctk.StringVar(value=VAE_FROM_CKPT)
         self.v_sampler = ctk.StringVar(value=self.cfg.get("sampler_name", "euler"))
         self.v_scheduler = ctk.StringVar(value=self.cfg.get("scheduler", "normal"))
@@ -164,18 +179,18 @@ class ModelTesterApp(ctk.CTk):
         self.v_img2img = ctk.StringVar(value="")
         self.v_img_denoise = ctk.StringVar(value="0.6")
 
-        # Hires
+        # Hires（詳細）
         self.v_hires_mode = ctk.StringVar(value="OFF")
         self.v_hires_scale = ctk.StringVar(value="1.5")
         self.v_hires_steps = ctk.StringVar(value="12")
         self.v_hires_denoise = ctk.StringVar(value="0.5")
         self.v_hires_upscaler = ctk.StringVar(value="")
 
-        # LoRA スタック（段ごとに name var, weight var）
+        # LoRA スタック
         self.lora_name_vars = [ctk.StringVar(value=NO_LORA) for _ in range(LORA_SLOTS)]
         self.lora_weight_vars = [ctk.StringVar(value="1.0") for _ in range(LORA_SLOTS)]
 
-        # 軸（X/Y/Z）の状態
+        # 軸（X/Y/Z）
         self.axis_type_vars = {a: ctk.StringVar(value="（なし）") for a in ("X", "Y", "Z")}
         self._axis_value_frames: dict[str, ctk.CTkFrame] = {}
         self._axis_value_widgets: dict[str, dict] = {"X": {}, "Y": {}, "Z": {}}
@@ -186,10 +201,14 @@ class ModelTesterApp(ctk.CTk):
         self._busy = False
         self._last_run_dir: Path | None = None
         self._grid_paths: list[Path] = []
-        self._img_refs: list = []  # CTkImage の参照保持
+        self._img_refs: list = []
+        self._grid_view_started = False
 
         self._build_layout()
         self._connect_and_list()
+
+    def _is_simple(self) -> bool:
+        return self.mode.get() == MODE_SIMPLE
 
     # ──────────────────────────────────────────
     #  レイアウト
@@ -203,7 +222,7 @@ class ModelTesterApp(ctk.CTk):
         top = ctk.CTkFrame(self, fg_color=PINK["panel"])
         top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 6))
         top.columnconfigure(1, weight=1)
-        ctk.CTkLabel(top, text="X / Y / Z プロット比較", font=ctk.CTkFont(size=18, weight="bold")).grid(
+        ctk.CTkLabel(top, text="画像生成 / 比較", font=ctk.CTkFont(size=18, weight="bold")).grid(
             row=0, column=0, sticky="w", padx=10, pady=8
         )
         ctk.CTkLabel(top, textvariable=self.status, anchor="w", text_color="#7a3b5a").grid(
@@ -236,25 +255,78 @@ class ModelTesterApp(ctk.CTk):
     def _build_controls(self, parent):
         r = 0
 
-        def section(text):
-            nonlocal r
-            ctk.CTkLabel(parent, text=text, anchor="w",
-                         font=ctk.CTkFont(size=13, weight="bold"), text_color="#7a3b5a").grid(
-                row=r, column=0, sticky="ew", padx=8, pady=(10, 2)); r += 1
+        # ── モード切替トグル ──
+        self._mode_seg = ctk.CTkSegmentedButton(
+            parent, values=[MODE_SIMPLE, MODE_DETAIL], variable=self.mode,
+            command=self._on_mode_change,
+        )
+        self._mode_seg.grid(row=r, column=0, sticky="ew", padx=8, pady=(8, 2)); r += 1
+        self._mode_hint = ctk.CTkLabel(parent, text="", anchor="w", text_color=PINK["muted"],
+                                       font=ctk.CTkFont(size=11))
+        self._mode_hint.grid(row=r, column=0, sticky="ew", padx=8, pady=(0, 4)); r += 1
 
-        # ── プロンプト ──
-        section("プロンプト")
+        # ── 共通：プロンプト / ネガティブ / モデル ──
+        ctk.CTkLabel(parent, text="プロンプト（出したい絵）", anchor="w").grid(row=r, column=0, sticky="ew", padx=8); r += 1
         self._prompt_box = ctk.CTkTextbox(parent, height=78, wrap="word")
         self._prompt_box.insert("1.0", "1girl, fantasy knight, dramatic lighting, masterpiece, best quality")
         self._prompt_box.grid(row=r, column=0, sticky="ew", padx=8, pady=4); r += 1
-        ctk.CTkLabel(parent, text="ネガティブ", anchor="w").grid(row=r, column=0, sticky="ew", padx=8); r += 1
-        self._neg_box = ctk.CTkTextbox(parent, height=52, wrap="word")
+        ctk.CTkLabel(parent, text="ネガティブ（避けたいもの）", anchor="w").grid(row=r, column=0, sticky="ew", padx=8); r += 1
+        self._neg_box = ctk.CTkTextbox(parent, height=48, wrap="word")
         self._neg_box.insert("1.0", "lowres, bad anatomy, worst quality, blurry")
         self._neg_box.grid(row=r, column=0, sticky="ew", padx=8, pady=4); r += 1
+        self._ckpt_menu = self._labeled_menu(parent, r, "モデル", self.v_ckpt, ["(接続待ち)"]); r += 1
 
-        # ── ベース設定 ──
+        # ── モード別パネル（同じ行に重ね、トグルで表示切替）──
+        self._simple_box = ctk.CTkFrame(parent, fg_color="transparent")
+        self._detail_box = ctk.CTkFrame(parent, fg_color="transparent")
+        self._simple_box.grid(row=r, column=0, sticky="ew")
+        self._detail_box.grid(row=r, column=0, sticky="ew")
+        self._simple_box.columnconfigure(0, weight=1)
+        self._detail_box.columnconfigure(0, weight=1)
+        r += 1
+        self._build_simple(self._simple_box)
+        self._build_detail(self._detail_box)
+
+        # ── 共通ボタン ──
+        self._refresh_btn = ctk.CTkButton(parent, text="接続 / 一覧更新", command=self._connect_and_list,
+                                          fg_color=PINK["accent"], hover_color=PINK["button_hover"])
+        self._refresh_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=(10, 2)); r += 1
+        self._gen_btn = ctk.CTkButton(parent, text="▶ 画像を生成", command=self.on_generate,
+                                      fg_color=PINK["button"], hover_color=PINK["button_hover"],
+                                      font=ctk.CTkFont(size=14, weight="bold"), height=40)
+        self._gen_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
+
+        self._on_mode_change(self.mode.get())
+
+    def _build_simple(self, box):
+        r = 0
+        ctk.CTkLabel(box, text="プロンプトとモデルを決めて生成。細かい設定はおまかせです。",
+                     anchor="w", justify="left", text_color=PINK["muted"],
+                     font=ctk.CTkFont(size=11), wraplength=360).grid(row=r, column=0, sticky="ew", padx=8, pady=(6, 2)); r += 1
+
+        # アップスケール（標準的な位置＝生成設定の最後・生成ボタンの直前）
+        ctk.CTkCheckBox(box, text="アップスケール（高画質化・少し遅くなる）", variable=self.v_upscale).grid(
+            row=r, column=0, sticky="w", padx=8, pady=(4, 4)); r += 1
+
+        # 枚数
+        crow = ctk.CTkFrame(box, fg_color="transparent")
+        crow.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
+        ctk.CTkLabel(crow, text="枚数", width=56, anchor="e").grid(row=0, column=0, padx=(0, 4))
+        ctk.CTkOptionMenu(crow, variable=self.v_count, values=["1", "2", "3", "4", "6"], width=80).grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(crow, text="（同じ条件で複数枚、見比べ用）", text_color=PINK["muted"],
+                     font=ctk.CTkFont(size=11)).grid(row=0, column=2, padx=6)
+
+    def _build_detail(self, box):
+        r = 0
+
+        def section(text):
+            nonlocal r
+            ctk.CTkLabel(box, text=text, anchor="w",
+                         font=ctk.CTkFont(size=13, weight="bold"), text_color="#7a3b5a").grid(
+                row=r, column=0, sticky="ew", padx=8, pady=(10, 2)); r += 1
+
         section("ベース設定（軸にしない項目の既定値）")
-        grid = ctk.CTkFrame(parent, fg_color="transparent")
+        grid = ctk.CTkFrame(box, fg_color="transparent")
         grid.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         grid.columnconfigure((1, 3), weight=1)
         for i, (label, var) in enumerate(
@@ -268,16 +340,14 @@ class ModelTesterApp(ctk.CTk):
                 ent.configure(placeholder_text="空=ランダム")
             ent.grid(row=row, column=col * 2 + 1, sticky="ew", pady=2)
 
-        self._ckpt_menu = self._labeled_menu(parent, r, "モデル", self.v_ckpt, ["(接続待ち)"]); r += 1
-        self._sampler_menu = self._labeled_menu(parent, r, "Sampler", self.v_sampler, self.samplers); r += 1
-        self._scheduler_menu = self._labeled_menu(parent, r, "Scheduler", self.v_scheduler, self.schedulers); r += 1
-        self._vae_menu = self._labeled_menu(parent, r, "VAE", self.v_vae, [VAE_FROM_CKPT]); r += 1
+        self._sampler_menu = self._labeled_menu(box, r, "Sampler", self.v_sampler, self.samplers); r += 1
+        self._scheduler_menu = self._labeled_menu(box, r, "Scheduler", self.v_scheduler, self.schedulers); r += 1
+        self._vae_menu = self._labeled_menu(box, r, "VAE", self.v_vae, [VAE_FROM_CKPT]); r += 1
 
-        # ── LoRA スタック ──
         section("LoRA スタック（重ねがけ可）")
         self._lora_menus = []
         for i in range(LORA_SLOTS):
-            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row = ctk.CTkFrame(box, fg_color="transparent")
             row.grid(row=r, column=0, sticky="ew", padx=8, pady=1); r += 1
             row.columnconfigure(0, weight=1)
             menu = ctk.CTkOptionMenu(row, variable=self.lora_name_vars[i], values=[NO_LORA])
@@ -285,15 +355,14 @@ class ModelTesterApp(ctk.CTk):
             ctk.CTkEntry(row, textvariable=self.lora_weight_vars[i], width=60).grid(row=0, column=1)
             self._lora_menus.append(menu)
 
-        # ── Hires / アップスケール ──
         section("Hires fix / アップスケール")
-        hrow = ctk.CTkFrame(parent, fg_color="transparent")
+        hrow = ctk.CTkFrame(box, fg_color="transparent")
         hrow.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         hrow.columnconfigure(1, weight=1)
         ctk.CTkLabel(hrow, text="方式", width=56, anchor="e").grid(row=0, column=0, padx=(0, 4))
         ctk.CTkOptionMenu(hrow, variable=self.v_hires_mode,
                           values=["OFF", "latent（再サンプル）", "アップスケーラーモデル"]).grid(row=0, column=1, sticky="ew")
-        hgrid = ctk.CTkFrame(parent, fg_color="transparent")
+        hgrid = ctk.CTkFrame(box, fg_color="transparent")
         hgrid.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         hgrid.columnconfigure((1, 3), weight=1)
         for i, (label, var) in enumerate(
@@ -302,11 +371,10 @@ class ModelTesterApp(ctk.CTk):
             row, col = divmod(i, 2)
             ctk.CTkLabel(hgrid, text=label, width=56, anchor="e").grid(row=row, column=col * 2, sticky="e", padx=(0, 4), pady=2)
             ctk.CTkEntry(hgrid, textvariable=var, width=90).grid(row=row, column=col * 2 + 1, sticky="ew", pady=2)
-        self._upscaler_menu = self._labeled_menu(parent, r, "Upscaler", self.v_hires_upscaler, ["(接続後に取得)"]); r += 1
+        self._upscaler_menu = self._labeled_menu(box, r, "Upscaler", self.v_hires_upscaler, ["(接続後に取得)"]); r += 1
 
-        # ── img2img ──
         section("img2img（任意）")
-        irow = ctk.CTkFrame(parent, fg_color="transparent")
+        irow = ctk.CTkFrame(box, fg_color="transparent")
         irow.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         irow.columnconfigure(0, weight=1)
         ctk.CTkEntry(irow, textvariable=self.v_img2img, placeholder_text="元画像パス（空=txt2img）").grid(
@@ -315,15 +383,14 @@ class ModelTesterApp(ctk.CTk):
                       fg_color=PINK["accent"], hover_color=PINK["button_hover"]).grid(row=0, column=1)
         ctk.CTkButton(irow, text="×", width=28, command=lambda: self.v_img2img.set(""),
                       fg_color=PINK["muted"], hover_color="#7a6a85").grid(row=0, column=2, padx=(4, 0))
-        idr = ctk.CTkFrame(parent, fg_color="transparent")
+        idr = ctk.CTkFrame(box, fg_color="transparent")
         idr.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
         ctk.CTkLabel(idr, text="denoise", width=56, anchor="e").grid(row=0, column=0, padx=(0, 4))
         ctk.CTkEntry(idr, textvariable=self.v_img_denoise, width=90).grid(row=0, column=1, sticky="w")
 
-        # ── X / Y / Z 軸 ──
-        section("X / Y / Z 軸")
+        section("X / Y / Z 軸（比較）")
         for axis in ("X", "Y", "Z"):
-            block = ctk.CTkFrame(parent, fg_color=PINK["cell"], corner_radius=8)
+            block = ctk.CTkFrame(box, fg_color=PINK["cell"], corner_radius=8)
             block.grid(row=r, column=0, sticky="ew", padx=8, pady=4); r += 1
             block.columnconfigure(1, weight=1)
             ctk.CTkLabel(block, text=f"{axis} 軸", width=44,
@@ -338,14 +405,17 @@ class ModelTesterApp(ctk.CTk):
             self._axis_value_frames[axis] = value_frame
             self._rebuild_axis_value(axis)
 
-        # ── ボタン ──
-        self._refresh_btn = ctk.CTkButton(parent, text="接続 / 一覧更新", command=self._connect_and_list,
-                                           fg_color=PINK["accent"], hover_color=PINK["button_hover"])
-        self._refresh_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=(10, 2)); r += 1
-        self._gen_btn = ctk.CTkButton(parent, text="▶ プロット生成", command=self.on_generate,
-                                      fg_color=PINK["button"], hover_color=PINK["button_hover"],
-                                      font=ctk.CTkFont(size=14, weight="bold"), height=40)
-        self._gen_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
+    def _on_mode_change(self, _value=None):
+        if self._is_simple():
+            self._detail_box.grid_remove()
+            self._simple_box.grid()
+            self._gen_btn.configure(text="▶ 画像を生成")
+            self._mode_hint.configure(text="かんたんモード：押すだけで生成。仕組みを学ぶなら『⚙️ 詳細』へ。")
+        else:
+            self._simple_box.grid_remove()
+            self._detail_box.grid()
+            self._gen_btn.configure(text="▶ プロット生成")
+            self._mode_hint.configure(text="詳細モード：X=列 / Y=行 / Z=複数グリッドで条件を一括比較。")
 
     def _labeled_menu(self, parent, row, label, var, values):
         """ラベル＋OptionMenu を指定行に1行作って、その OptionMenu を返す。"""
@@ -370,28 +440,24 @@ class ModelTesterApp(ctk.CTk):
             return
         if kind in LIST_AXES:
             values = self._axis_source_values(kind)
-            box = ctk.CTkScrollableFrame(frame, height=110, fg_color=PINK["panel"], label_text="チェックで比較対象に")
-            box.grid(row=0, column=0, sticky="ew")
+            inner = ctk.CTkScrollableFrame(frame, height=110, fg_color=PINK["panel"], label_text="チェックで比較対象に")
+            inner.grid(row=0, column=0, sticky="ew")
             check_vars: dict[str, ctk.BooleanVar] = {}
             if not values:
-                ctk.CTkLabel(box, text="（接続して一覧を取得してください）", text_color=PINK["muted"]).pack(anchor="w")
+                ctk.CTkLabel(inner, text="（接続して一覧を取得してください）", text_color=PINK["muted"]).pack(anchor="w")
             for name in values:
                 v = ctk.BooleanVar(value=False)
                 check_vars[name] = v
-                ctk.CTkCheckBox(box, text=short_label(name, 34), variable=v).pack(anchor="w", padx=4, pady=1)
+                ctk.CTkCheckBox(inner, text=short_label(name, 34), variable=v).pack(anchor="w", padx=4, pady=1)
             self._axis_value_widgets[axis] = {"checks": check_vars}
         else:
-            hint = {
-                AXIS_PROMPT_SR: "検索語, 置換1, 置換2 …",
-            }.get(kind, "カンマ区切り（例: 20, 28, 35）")
+            hint = {AXIS_PROMPT_SR: "検索語, 置換1, 置換2 …"}.get(kind, "カンマ区切り（例: 20, 28, 35）")
             ent = ctk.CTkEntry(frame, placeholder_text=hint)
             ent.grid(row=0, column=0, sticky="ew")
             self._axis_value_widgets[axis] = {"entry": ent}
 
     def _axis_source_values(self, kind: str) -> list[str]:
-        from tools.model_tester.xyz_plot import (
-            AXIS_CKPT, AXIS_LORA, AXIS_SAMPLER, AXIS_SCHEDULER,
-        )
+        from tools.model_tester.xyz_plot import AXIS_CKPT, AXIS_LORA, AXIS_SAMPLER, AXIS_SCHEDULER
         if kind == AXIS_CKPT:
             return self.checkpoints
         if kind == AXIS_LORA:
@@ -462,7 +528,11 @@ class ModelTesterApp(ctk.CTk):
         self.schedulers = data["schedulers"] or self.schedulers
 
         self._ckpt_menu.configure(values=self.checkpoints or ["(モデルなし)"])
-        if self.checkpoints and self.v_ckpt.get() not in self.checkpoints:
+        # config の ckpt_name を優先採用（無ければ先頭）
+        cfg_ckpt = str(self.cfg.get("ckpt_name", "")).strip()
+        if cfg_ckpt and cfg_ckpt in self.checkpoints:
+            self.v_ckpt.set(cfg_ckpt)
+        elif self.checkpoints and self.v_ckpt.get() not in self.checkpoints:
             self.v_ckpt.set(self.checkpoints[0])
 
         self._sampler_menu.configure(values=self.samplers)
@@ -479,7 +549,6 @@ class ModelTesterApp(ctk.CTk):
         if self.upscalers and not self.v_hires_upscaler.get():
             self.v_hires_upscaler.set(self.upscalers[0])
 
-        # 既に開いている軸の値エリア（リスト型）を再構築
         for axis in ("X", "Y", "Z"):
             kind = AXIS_LABELS.get(self.axis_type_vars[axis].get(), AXIS_NONE)
             if kind in LIST_AXES:
@@ -491,7 +560,7 @@ class ModelTesterApp(ctk.CTk):
         )
 
     # ──────────────────────────────────────────
-    #  ベース GenParams 構築
+    #  ベース GenParams 構築（両モード共通）
     # ──────────────────────────────────────────
 
     def _build_base_params(self) -> GenParams:
@@ -536,26 +605,38 @@ class ModelTesterApp(ctk.CTk):
         vae = self.v_vae.get()
         vae_name = None if vae == VAE_FROM_CKPT else vae
 
-        # Hires
-        hires_mode = {"OFF": HIRES_NONE, "latent（再サンプル）": HIRES_LATENT,
-                      "アップスケーラーモデル": HIRES_MODEL}.get(self.v_hires_mode.get(), HIRES_NONE)
-        upscaler = self.v_hires_upscaler.get()
-        if hires_mode == HIRES_MODEL and (not upscaler or upscaler.startswith("(")):
-            raise AxisError("アップスケーラーモデル方式を使うには Upscaler を選んでください（接続後に取得）。")
+        # Hires：モードで分岐
+        if self._is_simple():
+            if self.v_upscale.get():
+                hires_mode = HIRES_LATENT
+                hscale, hsteps, hdenoise, upscaler = (
+                    SIMPLE_HIRES["scale"], SIMPLE_HIRES["steps"], SIMPLE_HIRES["denoise"], "")
+            else:
+                hires_mode, hscale, hsteps, hdenoise, upscaler = HIRES_NONE, 1.5, 14, 0.4, ""
+        else:
+            hires_mode = {"OFF": HIRES_NONE, "latent（再サンプル）": HIRES_LATENT,
+                          "アップスケーラーモデル": HIRES_MODEL}.get(self.v_hires_mode.get(), HIRES_NONE)
+            upscaler = self.v_hires_upscaler.get()
+            if hires_mode == HIRES_MODEL and (not upscaler or upscaler.startswith("(")):
+                raise AxisError("アップスケーラーモデル方式を使うには Upscaler を選んでください（接続後に取得）。")
+            hscale = as_float(self.v_hires_scale, "Hires 倍率")
+            hsteps = as_int(self.v_hires_steps, "Hires steps", 1, 200)
+            hdenoise = as_float(self.v_hires_denoise, "Hires denoise")
 
-        # img2img
+        # img2img（詳細モードのみ）
         init_name = None
         denoise = 1.0
-        init_path = self.v_img2img.get().strip()
-        if init_path:
-            p = Path(init_path)
-            if not p.exists():
-                raise AxisError(f"img2img の元画像が見つかりません: {init_path}")
-            try:
-                init_name = comfy_client.upload_image(self.url, p, timeout=60)
-            except Exception as e:
-                raise AxisError(f"元画像のアップロードに失敗しました: {e}")
-            denoise = as_float(self.v_img_denoise, "img2img denoise")
+        if not self._is_simple():
+            init_path = self.v_img2img.get().strip()
+            if init_path:
+                p = Path(init_path)
+                if not p.exists():
+                    raise AxisError(f"img2img の元画像が見つかりません: {init_path}")
+                try:
+                    init_name = comfy_client.upload_image(self.url, p, timeout=60)
+                except Exception as e:
+                    raise AxisError(f"元画像のアップロードに失敗しました: {e}")
+                denoise = as_float(self.v_img_denoise, "img2img denoise")
 
         return GenParams(
             prompt=prompt,
@@ -574,19 +655,123 @@ class ModelTesterApp(ctk.CTk):
             denoise=denoise,
             init_image_name=init_name,
             hires_mode=hires_mode,
-            hires_scale=as_float(self.v_hires_scale, "Hires 倍率"),
-            hires_steps=as_int(self.v_hires_steps, "Hires steps", 1, 200),
-            hires_denoise=as_float(self.v_hires_denoise, "Hires denoise"),
+            hires_scale=hscale,
+            hires_steps=hsteps,
+            hires_denoise=hdenoise,
             hires_upscaler=upscaler if hires_mode == HIRES_MODEL else "",
         )
 
     # ──────────────────────────────────────────
-    #  生成
+    #  生成（モードで分岐）
     # ──────────────────────────────────────────
 
     def on_generate(self):
         if self._busy:
             return
+        if self._is_simple():
+            self._start_simple()
+        else:
+            self._start_xyz()
+
+    # ── かんたんモード：同条件で N 枚 ──
+
+    def _start_simple(self):
+        try:
+            base = self._build_base_params()
+        except AxisError as e:
+            messagebox.showwarning("入力エラー", str(e))
+            return
+        try:
+            count = max(1, min(int(self.v_count.get()), 12))
+        except ValueError:
+            count = 1
+
+        self._last_run_dir = PROJECT_ROOT / "outputs" / "model_tester" / datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._img_refs = []
+        self._simple_cells: dict[int, ctk.CTkLabel] = {}
+        self._prepare_simple_results(count)
+
+        self._set_busy(True)
+        self.progress.set(f"生成中 0 / {count} ...")
+        threading.Thread(target=self._simple_worker, args=(base, count), daemon=True).start()
+
+    def _simple_worker(self, base: GenParams, count: int):
+        try:
+            comfy_client.ensure_ready(self.config_data, start_if_needed=True)
+        except ComfyError as e:
+            self.after(0, self._abort_batch, str(e))
+            return
+        done = 0
+        for i in range(count):
+            p = base.copy()
+            if base.seed is not None:
+                p.seed = base.seed + i
+            else:
+                p.seed = random.randint(0, 2**63 - 1)
+            self.after(0, self._mark_simple_running, i)
+            try:
+                workflow, used_seed = comfy_client.build_workflow(p)
+                image = comfy_client.generate(self.url, workflow, timeout=self.timeout)
+                path = self._save_simple(image, i, used_seed)
+                self.after(0, self._place_simple, i, image, path)
+            except Exception as e:
+                self.after(0, self._place_simple_error, i, str(e))
+            done += 1
+            self.after(0, self.progress.set, f"生成中 {done} / {count} ...")
+        self.after(0, self._finish_simple, count)
+
+    def _save_simple(self, image: Image.Image, idx: int, seed) -> Path:
+        run_dir = self._last_run_dir
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out = run_dir / f"image_{idx + 1:02d}_seed{seed}.png"
+        image.convert("RGB").save(out, "PNG")
+        return out
+
+    def _prepare_simple_results(self, count: int):
+        for child in self._results.winfo_children():
+            child.destroy()
+        self._simple_cells = {}
+        cols = 1 if count == 1 else 2
+        block = ctk.CTkFrame(self._results, fg_color="transparent")
+        block.grid(row=0, column=0, sticky="w")
+        cw, ch = (520, 292) if count == 1 else (320, 180)
+        for i in range(count):
+            rr, cc = divmod(i, cols)
+            cell = ctk.CTkLabel(block, text="生成待ち", width=cw, height=ch,
+                                fg_color=PINK["cell"], corner_radius=6)
+            cell.grid(row=rr, column=cc, padx=6, pady=6)
+            self._simple_cells[i] = cell
+        self._simple_cell_size = (cw, ch)
+
+    def _mark_simple_running(self, i):
+        cell = self._simple_cells.get(i)
+        if cell is not None:
+            cell.configure(text="生成中 …")
+
+    def _place_simple(self, i, image, path):
+        cell = self._simple_cells.get(i)
+        if cell is None:
+            return
+        thumb = image.convert("RGB")
+        thumb.thumbnail(self._simple_cell_size, Image.LANCZOS)
+        ctk_img = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=thumb.size)
+        self._img_refs.append(ctk_img)
+        cell.configure(image=ctk_img, text="")
+        cell.bind("<Button-1>", lambda e, p=path, n=i: ZoomWindow(self, p, f"image {n + 1}"))
+
+    def _place_simple_error(self, i, message):
+        cell = self._simple_cells.get(i)
+        if cell is not None:
+            cell.configure(text=f"失敗\n{message[:60]}", fg_color="#f3d6d6")
+
+    def _finish_simple(self, count):
+        self._set_busy(False)
+        ok = sum(1 for c in self._simple_cells.values() if c.cget("text") == "")
+        self.progress.set(f"完了：{ok} / {count} 枚　保存先: outputs/model_tester/{self._last_run_dir.name}")
+
+    # ── 詳細モード：X/Y/Z プロット ──
+
+    def _start_xyz(self):
         try:
             base = self._build_base_params()
             x = self._read_axis("X")
@@ -596,8 +781,6 @@ class ModelTesterApp(ctk.CTk):
             messagebox.showwarning("入力エラー", str(e))
             return
 
-        # 全セルでシードを揃える（Seed 軸を使わず、seed 未指定なら 1 つ固定）
-        from tools.model_tester.xyz_plot import AXIS_SEED
         seed_is_axis = AXIS_SEED in (x.kind, y.kind, z.kind)
         if base.seed is None and not seed_is_axis:
             base.seed = random.randint(0, 2**63 - 1)
@@ -611,7 +794,6 @@ class ModelTesterApp(ctk.CTk):
         ):
             return
 
-        # 軸ヘッダー（保存グリッド・表示用）
         self._x_headers = self._axis_headers(x)
         self._y_headers = self._axis_headers(y)
         self._z_headers = self._axis_headers(z)
@@ -624,7 +806,7 @@ class ModelTesterApp(ctk.CTk):
 
         self._set_busy(True)
         self.progress.set(f"生成中 0 / {len(jobs)} ...")
-        threading.Thread(target=self._generate_worker, args=(jobs,), daemon=True).start()
+        threading.Thread(target=self._xyz_worker, args=(jobs,), daemon=True).start()
 
     def _axis_headers(self, axis: Axis) -> list[str]:
         from tools.model_tester.xyz_plot import value_label
@@ -634,13 +816,12 @@ class ModelTesterApp(ctk.CTk):
             return [value_label(axis.kind, v) for v in axis.values[1:]]
         return [value_label(axis.kind, v) for v in axis.values]
 
-    def _generate_worker(self, jobs):
+    def _xyz_worker(self, jobs):
         try:
             comfy_client.ensure_ready(self.config_data, start_if_needed=True)
         except ComfyError as e:
             self.after(0, self._abort_batch, str(e))
             return
-
         total = len(jobs)
         done = 0
         for job in jobs:
@@ -655,35 +836,20 @@ class ModelTesterApp(ctk.CTk):
                 self.after(0, self._place_error, job, str(e))
             done += 1
             self.after(0, self.progress.set, f"生成中 {done} / {total} ...")
-
         self.after(0, self._finish_batch, total)
 
     def _save_cell(self, image: Image.Image, job, seed) -> Path:
         run_dir = self._last_run_dir
         run_dir.mkdir(parents=True, exist_ok=True)
-        name = f"z{job.z_index}_y{job.y_index}_x{job.x_index}_seed{seed}.png"
-        out = run_dir / name
+        out = run_dir / f"z{job.z_index}_y{job.y_index}_x{job.x_index}_seed{seed}.png"
         image.convert("RGB").save(out, "PNG")
         return out
-
-    # ── 結果表示（Z ごとにライブのセル枠 → 完了でグリッド画像を保存）──
-
-    def _show_placeholder(self):
-        for child in self._results.winfo_children():
-            child.destroy()
-        ctk.CTkLabel(
-            self._results,
-            text="左で X / Y / Z 軸を設定して『▶ プロット生成』を押してください。\n"
-                 "X=列、Y=行、Z=グリッドを複数枚に分けます。",
-            justify="left",
-        ).grid(row=0, column=0, padx=12, pady=12, sticky="w")
 
     def _prepare_results_view(self, x: Axis, y: Axis, z: Axis):
         for child in self._results.winfo_children():
             child.destroy()
         self._cell_widgets: dict[tuple[int, int, int], ctk.CTkLabel] = {}
         cols = len(self._x_headers)
-        rows = len(self._y_headers)
         cell_w, cell_h = 150, 84
 
         gr = 0
@@ -694,7 +860,6 @@ class ModelTesterApp(ctk.CTk):
                     row=gr, column=0, sticky="w", padx=6, pady=(8, 2)); gr += 1
             block = ctk.CTkFrame(self._results, fg_color=PINK["panel"])
             block.grid(row=gr, column=0, sticky="w", padx=6, pady=4); gr += 1
-
             ctk.CTkLabel(block, text="Y＼X", font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, padx=3, pady=3)
             for ci, xhead in enumerate(self._x_headers, start=1):
                 ctk.CTkLabel(block, text=xhead or "—", font=ctk.CTkFont(size=11, weight="bold"),
@@ -735,7 +900,6 @@ class ModelTesterApp(ctk.CTk):
 
     def _finish_batch(self, total):
         self._set_busy(False)
-        # Z ごとにラベル付きグリッド画像を合成・保存し、結果欄に表示
         for zi, zhead in enumerate(self._z_headers):
             cells = {
                 (job_y, job_x): img
@@ -752,7 +916,6 @@ class ModelTesterApp(ctk.CTk):
             grid.convert("RGB").save(grid_path, "PNG")
             self._grid_paths.append(grid_path)
             self._append_grid_preview(grid, grid_path, title)
-
         ok = len(self._cell_images)
         self.progress.set(
             f"完了：{ok} / {total} 枚　グリッド {len(self._grid_paths)} 枚保存："
@@ -760,19 +923,16 @@ class ModelTesterApp(ctk.CTk):
         )
 
     def _append_grid_preview(self, grid_image: Image.Image, path: Path, caption: str):
-        # ライブのセル枠を消して、合成済みグリッド画像（クリックで拡大）を並べる
-        if not getattr(self, "_grid_view_started", False):
+        if not self._grid_view_started:
             for child in self._results.winfo_children():
                 child.destroy()
             self._grid_view_started = True
             self._grid_view_row = 0
-
         img = grid_image.convert("RGB")
         scale = min(PREVIEW_MAX_W / img.width, 1.0)
         size = (int(img.width * scale), int(img.height * scale))
         ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=size)
         self._img_refs.append(ctk_img)
-
         if caption:
             ctk.CTkLabel(self._results, text=caption, font=ctk.CTkFont(size=13, weight="bold"),
                          text_color="#7a3b5a").grid(row=self._grid_view_row, column=0, sticky="w", padx=6, pady=(8, 0))
@@ -785,6 +945,16 @@ class ModelTesterApp(ctk.CTk):
     # ──────────────────────────────────────────
     #  その他
     # ──────────────────────────────────────────
+
+    def _show_placeholder(self):
+        for child in self._results.winfo_children():
+            child.destroy()
+        ctk.CTkLabel(
+            self._results,
+            text="左でプロンプトとモデルを決めて『▶ 画像を生成』を押してください。\n"
+                 "条件を一括で見比べたいときは、左上で『⚙️ 詳細（全機能）』に切り替えます。",
+            justify="left",
+        ).grid(row=0, column=0, padx=12, pady=12, sticky="w")
 
     def _pick_init_image(self):
         path = filedialog.askopenfilename(
