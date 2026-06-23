@@ -53,6 +53,7 @@ from tools.model_tester.xyz_plot import (  # noqa: E402
     Axis,
     AxisError,
 )
+from tools.model_tester.workflow_view import WorkflowWindow  # noqa: E402
 
 # ── Theme（本体に合わせる。pink_theme は config/ と assets/config/ の両方を探す）──
 ctk.set_appearance_mode("light")
@@ -295,6 +296,9 @@ class ModelTesterApp(ctk.CTk):
                                       fg_color=PINK["button"], hover_color=PINK["button_hover"],
                                       font=ctk.CTkFont(size=14, weight="bold"), height=40)
         self._gen_btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2); r += 1
+        ctk.CTkButton(parent, text="🔧 ワークフローを見る（勉強用）", command=self.on_show_workflow,
+                      fg_color="#8a6ea0", hover_color="#6f5685").grid(
+            row=r, column=0, sticky="ew", padx=8, pady=(2, 8)); r += 1
 
         self._on_mode_change(self.mode.get())
 
@@ -563,7 +567,9 @@ class ModelTesterApp(ctk.CTk):
     #  ベース GenParams 構築（両モード共通）
     # ──────────────────────────────────────────
 
-    def _build_base_params(self) -> GenParams:
+    def _build_base_params(self, for_preview: bool = False) -> GenParams:
+        """入力から GenParams を作る。for_preview=True は配線図プレビュー用で、
+        ComfyUI 接続や img2img アップロードを行わない（未接続でも図を出せる）。"""
         def as_int(var, label, lo, hi):
             try:
                 v = int(float(var.get()))
@@ -586,7 +592,10 @@ class ModelTesterApp(ctk.CTk):
 
         ckpt = self.v_ckpt.get().strip()
         if not ckpt or ckpt.startswith("("):
-            raise AxisError("モデル(checkpoint)を選んでください（接続後に一覧から選択）。")
+            if for_preview:
+                ckpt = str(self.cfg.get("ckpt_name") or "model.safetensors")
+            else:
+                raise AxisError("モデル(checkpoint)を選んでください（接続後に一覧から選択）。")
 
         seed = None
         seed_raw = self.v_seed.get().strip()
@@ -630,12 +639,15 @@ class ModelTesterApp(ctk.CTk):
             init_path = self.v_img2img.get().strip()
             if init_path:
                 p = Path(init_path)
-                if not p.exists():
-                    raise AxisError(f"img2img の元画像が見つかりません: {init_path}")
-                try:
-                    init_name = comfy_client.upload_image(self.url, p, timeout=60)
-                except Exception as e:
-                    raise AxisError(f"元画像のアップロードに失敗しました: {e}")
+                if for_preview:
+                    init_name = p.name or "input.png"  # 図用：アップロードしない
+                else:
+                    if not p.exists():
+                        raise AxisError(f"img2img の元画像が見つかりません: {init_path}")
+                    try:
+                        init_name = comfy_client.upload_image(self.url, p, timeout=60)
+                    except Exception as e:
+                        raise AxisError(f"元画像のアップロードに失敗しました: {e}")
                 denoise = as_float(self.v_img_denoise, "img2img denoise")
 
         return GenParams(
@@ -672,6 +684,21 @@ class ModelTesterApp(ctk.CTk):
             self._start_simple()
         else:
             self._start_xyz()
+
+    def on_show_workflow(self):
+        """今の設定でのワークフロー（ノード配線）を別窓で表示する。"""
+        try:
+            base = self._build_base_params(for_preview=True)
+        except AxisError as e:
+            messagebox.showwarning("入力エラー", str(e))
+            return
+        try:
+            workflow, _seed = comfy_client.build_workflow(base)
+        except Exception as e:
+            messagebox.showwarning("ワークフロー", f"ワークフローの組み立てに失敗しました: {e}")
+            return
+        caption = "かんたん" if self._is_simple() else "詳細（ベース）"
+        WorkflowWindow(self, workflow, PROJECT_ROOT / "outputs" / "model_tester", caption=caption)
 
     # ── かんたんモード：同条件で N 枚 ──
 
