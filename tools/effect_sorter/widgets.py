@@ -79,31 +79,41 @@ class PreviewPanel(ctk.CTkFrame):
         )
         self._zoom_btn.pack(side="right")
 
-        self._image_label = ctk.CTkLabel(
-            self, text="未分類画像を選択してください", width=self.PREVIEW_SIZE[0],
-            height=self.PREVIEW_SIZE[1],
-        )
-        self._image_label.pack(expand=True, fill="both", padx=6, pady=6)
+        self._image_label = None
+        self._set_label(None, "未分類画像を選択してください")
 
     def show(self, path):
-        """指定パスの画像をプレビューに表示する。"""
+        """指定パスの画像をプレビューに表示する。
+
+        CTkImage を差し替えると古い PhotoImage が GC され、CTkLabel が内部で
+        まだその画像を参照しているため次回 configure 時に
+        「image doesn't exist」で落ちる（2回目以降プレビューが出ない原因）。
+        これを根本回避するため、表示のたびにラベルを作り直す。
+        """
         path = Path(path) if path else None
         self._current_path = path
-        self._image_label.configure(image=None, text="")
-        self._image_label.update_idletasks()
+
         if path is None or not path.exists():
-            self._img_ref = None
-            self._image_label.configure(image=None, text="未分類画像を選択してください")
+            self._set_label(None, "未分類画像を選択してください")
             return
         thumb = load_thumbnail(path, self.PREVIEW_SIZE)
         if thumb is None:
-            self._img_ref = None
-            self._image_label.configure(image=None, text="画像を開けませんでした")
+            self._set_label(None, "画像を開けませんでした")
             return
-        self._img_ref = ctk.CTkImage(
-            light_image=thumb, dark_image=thumb, size=self.PREVIEW_SIZE
+        self._set_label(
+            ctk.CTkImage(light_image=thumb, dark_image=thumb, size=self.PREVIEW_SIZE), ""
         )
-        self._image_label.configure(image=self._img_ref, text="")
+
+    def _set_label(self, ctk_img, text):
+        """画像ラベルを作り直して差し替える（古い画像参照を完全に手放す）。"""
+        if self._image_label is not None:
+            self._image_label.destroy()
+        self._img_ref = ctk_img
+        self._image_label = ctk.CTkLabel(
+            self, image=ctk_img, text=text,
+            width=self.PREVIEW_SIZE[0], height=self.PREVIEW_SIZE[1],
+        )
+        self._image_label.pack(expand=True, fill="both", padx=6, pady=6)
 
     def _open_zoom(self):
         if self._current_path and self._current_path.exists():
