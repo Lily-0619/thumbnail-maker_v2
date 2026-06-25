@@ -70,6 +70,7 @@ class PreviewPanel(ctk.CTkFrame):
         super().__init__(parent)
         self._current_path = None
         self._img_ref = None
+        self._prev_img_ref = None  # 旧CTkImageを1サイクル保持してGCを遅延させる
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=6, pady=(6, 0))
@@ -86,24 +87,31 @@ class PreviewPanel(ctk.CTkFrame):
         self._image_label.pack(expand=True, fill="both", padx=6, pady=6)
 
     def show(self, path):
-        """指定パスの画像をプレビューに表示する。"""
+        """指定パスの画像をプレビューに表示する。
+
+        重要：必ず「ラベルへ新画像を適用してから旧参照を入れ替える」順序で行う。
+        先に旧 CTkImage を捨てるとGCで内部 PhotoImage が破棄され、ラベル再描画時に
+        "image pyimageN doesn't exist" となって2枚目以降が表示されない不具合が出る。
+        """
         path = Path(path) if path else None
         self._current_path = path
-        self._image_label.configure(image=None, text="")
-        self._image_label.update_idletasks()
+
         if path is None or not path.exists():
-            self._img_ref = None
             self._image_label.configure(image=None, text="未分類画像を選択してください")
+            self._prev_img_ref, self._img_ref = self._img_ref, None
             return
+
         thumb = load_thumbnail(path, self.PREVIEW_SIZE)
         if thumb is None:
-            self._img_ref = None
             self._image_label.configure(image=None, text="画像を開けませんでした")
+            self._prev_img_ref, self._img_ref = self._img_ref, None
             return
-        self._img_ref = ctk.CTkImage(
-            light_image=thumb, dark_image=thumb, size=self.PREVIEW_SIZE
-        )
-        self._image_label.configure(image=self._img_ref, text="")
+
+        new_img = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=self.PREVIEW_SIZE)
+        # 1) 先にラベルへ新画像を適用（この間、旧 self._img_ref はまだ生きている）
+        self._image_label.configure(image=new_img, text="")
+        # 2) そのあとで参照を入れ替える（旧→prevで1サイクル保持してから解放）
+        self._prev_img_ref, self._img_ref = self._img_ref, new_img
 
     def _open_zoom(self):
         if self._current_path and self._current_path.exists():

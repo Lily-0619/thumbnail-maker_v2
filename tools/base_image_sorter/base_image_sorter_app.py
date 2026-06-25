@@ -306,10 +306,20 @@ class BaseImageSorterApp(DnDCTk):
                 text="D&Dは無効です。「＋ 画像を追加」で取り込んでください。"
             )
             return
-        # 一覧エリアとウィンドウ全体をドロップ先にする。
-        for target in (self._image_grid, self):
-            target.drop_target_register(DND_FILES)
-            target.dnd_bind("<<Drop>>", self._on_drop)
+        # ドロップ先を広めに登録する。CTkScrollableFrame は内部に canvas を持ち、
+        # 一覧が空のときは可視部分が canvas なので、grid本体だけだと最初の投入を
+        # 取りこぼす。ウィンドウ全体／一覧の内部frame／内部canvas／外枠frame を登録する。
+        targets = [self, self._image_grid]
+        for attr in ("_parent_canvas", "_parent_frame"):
+            widget = getattr(self._image_grid, attr, None)
+            if widget is not None:
+                targets.append(widget)
+        for target in targets:
+            try:
+                target.drop_target_register(DND_FILES)
+                target.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:
+                pass
         self._dnd_label.configure(text="画像/フォルダをここへドラッグ&ドロップで追加")
 
     def _on_drop(self, event):

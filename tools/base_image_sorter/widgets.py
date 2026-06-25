@@ -131,7 +131,7 @@ class ImageGrid(ctk.CTkScrollableFrame):
     THUMB_SIZE = (84, 84)
     COLS = 3
 
-    def __init__(self, parent, on_select, label_text="入力画像（D&Dで追加）", **kwargs):
+    def __init__(self, parent, on_select, label_text="仕分け画像", **kwargs):
         super().__init__(parent, label_text=label_text, **kwargs)
         self._on_select = on_select
         self._thumb_refs = []
