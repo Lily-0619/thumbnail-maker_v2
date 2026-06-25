@@ -1,0 +1,4 @@
+# tools/base_image_sorter 専用の追加依存（本体 requirements.txt は変更しない）
+# D&D（フォルダ/画像のドラッグ&ドロップ）用。無くてもアプリは起動する（任意）。
+tkinterdnd2>=0.4.0
+# Pillow, customtkinter は本体 requirements.txt 済み

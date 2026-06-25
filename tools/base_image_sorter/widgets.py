@@ -1,13 +1,12 @@
 """
 widgets.py
-再利用するUI部品。
+再利用するUI部品（effect_sorter の widgets を踏襲）。
 
   - load_thumbnail : Pillowで透過を保ったサムネ生成
   - ZoomWindow     : プレビュー拡大用の別ウィンドウ（CTkToplevel）
   - PreviewPanel   : 選択中画像を大きく表示（右上に拡大ボタン）
-  - UnsortedGrid   : _unsorted のサムネ一覧（選択でコールバック）
+  - ImageGrid      : 入力フォルダ内のサムネ一覧（選択でコールバック）
 
-本体 ui/app.py の CharacterPickerDialog（CTkScrollableFrame + CTkImage）の作法を踏襲。
 CTkImage は参照を保持しないとサムネが消えるため self._thumb_refs に退避する。
 """
 
@@ -64,7 +63,7 @@ class ZoomWindow(ctk.CTkToplevel):
 class PreviewPanel(ctk.CTkFrame):
     """選択中画像を大きく表示。右上に拡大ボタン。"""
 
-    PREVIEW_SIZE = (360, 270)
+    PREVIEW_SIZE = (440, 340)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -75,13 +74,19 @@ class PreviewPanel(ctk.CTkFrame):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=6, pady=(6, 0))
         ctk.CTkLabel(header, text="プレビュー", anchor="w").pack(side="left")
+        self._name_label = ctk.CTkLabel(
+            header, text="", anchor="e", font=ctk.CTkFont(size=11)
+        )
+        self._name_label.pack(side="left", expand=True, fill="x", padx=6)
         self._zoom_btn = ctk.CTkButton(
             header, text="🔍 拡大", width=70, command=self._open_zoom
         )
         self._zoom_btn.pack(side="right")
 
         self._image_label = ctk.CTkLabel(
-            self, text="未分類画像を選択してください", width=self.PREVIEW_SIZE[0],
+            self,
+            text="入力画像を選択してください",
+            width=self.PREVIEW_SIZE[0],
             height=self.PREVIEW_SIZE[1],
         )
         self._image_label.pack(expand=True, fill="both", padx=6, pady=6)
@@ -97,10 +102,12 @@ class PreviewPanel(ctk.CTkFrame):
         self._current_path = path
 
         if path is None or not path.exists():
-            self._image_label.configure(image=None, text="未分類画像を選択してください")
+            self._name_label.configure(text="")
+            self._image_label.configure(image=None, text="入力画像を選択してください")
             self._prev_img_ref, self._img_ref = self._img_ref, None
             return
 
+        self._name_label.configure(text=path.name)
         thumb = load_thumbnail(path, self.PREVIEW_SIZE)
         if thumb is None:
             self._image_label.configure(image=None, text="画像を開けませんでした")
@@ -118,14 +125,14 @@ class PreviewPanel(ctk.CTkFrame):
             ZoomWindow(self.winfo_toplevel(), self._current_path)
 
 
-class UnsortedGrid(ctk.CTkScrollableFrame):
-    """_unsorted のサムネ一覧。クリックで on_select(path) を呼ぶ。"""
+class ImageGrid(ctk.CTkScrollableFrame):
+    """入力フォルダのサムネ一覧。クリックで on_select(path) を呼ぶ。"""
 
     THUMB_SIZE = (84, 84)
     COLS = 3
 
-    def __init__(self, parent, on_select, **kwargs):
-        super().__init__(parent, label_text="未分類 (_unsorted)", **kwargs)
+    def __init__(self, parent, on_select, label_text="仕分け画像", **kwargs):
+        super().__init__(parent, label_text=label_text, **kwargs)
         self._on_select = on_select
         self._thumb_refs = []
         self._selected = None
@@ -140,7 +147,8 @@ class UnsortedGrid(ctk.CTkScrollableFrame):
 
         if not image_paths:
             ctk.CTkLabel(
-                self, text="未分類画像がありません。\n「画像を追加」ボタンで追加してください。"
+                self,
+                text="ここに画像をドラッグ&ドロップ\nまたは「＋ 画像を追加」で取り込み",
             ).grid(row=0, column=0, padx=8, pady=8)
             return
 

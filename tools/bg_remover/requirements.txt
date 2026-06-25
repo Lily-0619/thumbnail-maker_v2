@@ -1,0 +1,8 @@
+# tools/bg_remover 専用の追加依存（本体 requirements.txt は変更しない）
+# 背景除去ライブラリ。GPU版（NVIDIA/CUDA前提）。
+# CUDAが使えない環境では rembg[cpu,cli] に変える。
+rembg[gpu,cli]>=2.0.0
+# D&D用（任意。無くてもドロップエリアのクリック→ファイル選択で動作）
+tkinterdnd2>=0.4.0
+# Pillow, customtkinter は本体 requirements.txt 済み
+# （D:\汎用ツール 等で単体利用するときは customtkinter / Pillow も別途インストール）
