@@ -98,8 +98,8 @@ class BgRemoverApp(DnDCTk):
         self.title("背景除去ツール")
         family = _register_ui_font()
         _apply_tk_default_font(family)
-        self.geometry("900x820")
-        self.minsize(720, 680)
+        self.geometry("1240x900")
+        self.minsize(1000, 720)
         self.configure(fg_color="#fdeaf3")
 
         paths.ensure_dirs()

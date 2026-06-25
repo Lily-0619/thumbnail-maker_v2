@@ -2,13 +2,14 @@
 bg_removal_panel.py
 背景除去のコアUI。CTkFrame なので独立ウィンドウにもメインアプリのタブにも埋め込める。
 
-  上段: 入力（D&Dドロップ／クリックでファイル選択）＋ 元画像プレビュー
-  中段: モデル選択（CTkOptionMenu）＋ 背景除去を実行
-  下段: 結果プレビュー（チェッカー背景で透過確認）＋ PNG保存 ＋ ステータス
+  左: 処理する画像グリッド（base_image_sorter の仕分けグリッドを流用。D&Dで複数貯めて選択）
+  右上: モデル複数選択（チェック）＋ 背景除去を実行 ＋ 進捗バー ＋ ステータス
+  右下: 結果エリア（元画像＋選択モデルごとに分けてプレビュー。各右上に🔍拡大、モデルは💾保存）
 
-処理は重いので threading で実行し、UI更新は after() 経由でメインスレッドに戻す。
-プレビューの画像差し替えは「新画像をラベルへ適用してから旧CTkImage参照を入れ替える」
-順序にして、2枚目以降が出ない CTkImage 不具合（image pyimageN doesn't exist）を防ぐ。
+処理は重いので threading で実行（選択モデルを順に処理）し、UI更新は after() 経由。
+進捗はプログレスバー（処理中アニメ）＋「モデル名 (i/N)」表示で可視化する。
+プレビュー差し替えは「新画像をラベルへ適用してから旧CTkImage参照を入れ替える」順序にして
+2枚目以降が出ない CTkImage 不具合（image pyimageN doesn't exist）を防ぐ。
 """
 
 import threading
@@ -19,31 +20,32 @@ import customtkinter as ctk
 from PIL import Image
 
 try:
-    # パッケージとして import された場合（例: メインアプリへ埋め込み）
+    # パッケージとして import された場合（メインアプリ埋め込み等）
     from . import engine, paths
+    from .widgets import IMAGE_EXTS, ImageGrid, ZoomWindow
 except ImportError:
     # 単体スクリプトから import された場合（独立ウィンドウ／汎用ツール配置）
     import engine
     import paths
+    from widgets import IMAGE_EXTS, ImageGrid, ZoomWindow
 
 try:
     from tkinterdnd2 import DND_FILES
 except ImportError:
     DND_FILES = None
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-
 PINK = {
     "panel": "#f8dbe8",
     "button": "#db3b8f",
     "button_hover": "#c02e7b",
-    "drop": "#c6b6e2",
-    "drop_hover": "#b09cd4",
-    "drop_text": "#3f2a44",
+    "accent": "#c6b6e2",
+    "accent_hover": "#b09cd4",
+    "accent_text": "#3f2a44",
 }
 
-ORIG_PREVIEW = (260, 200)
-RESULT_PREVIEW = (380, 300)
+PANE_PREVIEW = (240, 190)
+
+_ORIGINAL_KEY = "__original__"
 
 
 class BgRemovalPanel(ctk.CTkFrame):
@@ -52,19 +54,19 @@ class BgRemovalPanel(ctk.CTkFrame):
         self._output_dir = Path(output_dir) if output_dir else paths.OUTPUT_DIR
         self._on_status = on_status
 
+        self._image_list = []  # 処理対象（D&D/追加した画像）のメモリ上リスト
         self.current_image_path = None
-        self.original_image = None  # PIL.Image
-        self.result_image = None  # PIL.Image（背景除去後 RGBA）
+        self.original_image = None  # PIL.Image（選択中の元画像）
+        self._results = {}  # {model_name: PIL.Image} 選択中画像の結果
+        self._active_models = []  # 今回処理対象のモデル
+        self._panes = {}  # key -> dict（pane widgets / refs）
         self._busy = False
 
-        # CTkImage の参照保持（*_prev はGC遅延用）
-        self._orig_ref = None
-        self._orig_ref_prev = None
-        self._result_ref = None
-        self._result_ref_prev = None
-
-        self.model_label = ctk.StringVar(value=engine.MODELS[0][1])
-        self.status = ctk.StringVar(value="画像を読み込んでください")
+        self._model_vars = {
+            name: ctk.BooleanVar(value=(name == engine.MODEL_NAMES[0]))
+            for name in engine.MODEL_NAMES
+        }
+        self.status = ctk.StringVar(value="画像をドラッグ&ドロップで追加してください")
 
         self._build()
         self._enable_dnd()
@@ -74,105 +76,96 @@ class BgRemovalPanel(ctk.CTkFrame):
     # ──────────────────────────────────────────
 
     def _build(self):
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.columnconfigure(0, weight=0)  # 入力グリッド（固定幅）
+        self.columnconfigure(1, weight=1)  # 設定＋結果
+        self.rowconfigure(1, weight=1)
 
-        # ── 上段: 入力 ──
-        top = ctk.CTkFrame(self, fg_color=PINK["panel"])
-        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        top.columnconfigure(0, weight=1)
-        top.columnconfigure(1, weight=0)
-
-        self._drop_area = ctk.CTkButton(
-            top,
-            text="ここに画像をドラッグ&ドロップ\n（クリックでファイル選択）",
-            height=140,
-            font=ctk.CTkFont(size=14),
-            fg_color=PINK["drop"], hover_color=PINK["drop_hover"],
-            text_color=PINK["drop_text"],
-            command=self.on_browse,
-        )
-        self._drop_area.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-
-        self._orig_label = ctk.CTkLabel(
-            top, text="元画像プレビュー",
-            width=ORIG_PREVIEW[0], height=ORIG_PREVIEW[1],
-        )
-        self._orig_label.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
-
-        # ── 中段: 設定 ──
-        mid = ctk.CTkFrame(self, fg_color=PINK["panel"])
-        mid.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
-        ctk.CTkLabel(mid, text="モデル：").pack(side="left", padx=(10, 4), pady=10)
-        ctk.CTkOptionMenu(
-            mid, variable=self.model_label,
-            values=[label for _name, label in engine.MODELS],
-            width=260,
-        ).pack(side="left", padx=4, pady=10)
-        self._run_btn = ctk.CTkButton(
-            mid, text="背景除去を実行", command=self.on_run,
+        # ── 左: 処理する画像グリッド ──
+        left = ctk.CTkFrame(self, fg_color=PINK["panel"])
+        left.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(8, 4), pady=8)
+        left.rowconfigure(0, weight=1)
+        left.columnconfigure(0, weight=1)
+        self._grid = ImageGrid(left, on_select=self._select_image, width=230)
+        self._grid.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        btns = ctk.CTkFrame(left, fg_color="transparent")
+        btns.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        ctk.CTkButton(
+            btns, text="＋ 画像を追加", command=self.on_browse,
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
+        ).pack(side="left", padx=2)
+        ctk.CTkButton(
+            btns, text="クリア", width=60, command=self.on_clear,
+            fg_color=PINK["accent"], hover_color=PINK["accent_hover"],
+            text_color=PINK["accent_text"],
+        ).pack(side="left", padx=2)
+        self._dnd_hint = ctk.CTkLabel(
+            left, text="", text_color="#a05050", font=ctk.CTkFont(size=11)
         )
-        self._run_btn.pack(side="left", padx=10, pady=10)
+        self._dnd_hint.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
 
-        # ── 下段: 結果 ──
-        bottom = ctk.CTkFrame(self, fg_color=PINK["panel"])
-        bottom.grid(row=2, column=0, sticky="nsew", padx=8, pady=(4, 8))
-        bottom.columnconfigure(0, weight=1)
-        bottom.rowconfigure(1, weight=1)
+        # ── 右上: モデル選択＋実行＋進捗 ──
+        ctrl = ctk.CTkFrame(self, fg_color=PINK["panel"])
+        ctrl.grid(row=0, column=1, sticky="ew", padx=(4, 8), pady=(8, 4))
+        ctrl.columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(bottom, text="結果（透過はチェッカー背景で確認）", anchor="w").grid(
+        ctk.CTkLabel(ctrl, text="モデル（複数選択で比較）", anchor="w").grid(
             row=0, column=0, sticky="w", padx=10, pady=(8, 0)
         )
-        self._result_label = ctk.CTkLabel(
-            bottom, text="ここに結果が表示されます",
-            width=RESULT_PREVIEW[0], height=RESULT_PREVIEW[1],
-        )
-        self._result_label.grid(row=1, column=0, sticky="nsew", padx=10, pady=8)
+        models_frame = ctk.CTkFrame(ctrl, fg_color="transparent")
+        models_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
+        for idx, (name, label) in enumerate(engine.MODELS):
+            r, c = divmod(idx, 2)
+            models_frame.columnconfigure(c, weight=1)
+            ctk.CTkCheckBox(
+                models_frame, text=label, variable=self._model_vars[name],
+            ).grid(row=r, column=c, sticky="w", padx=8, pady=4)
 
-        actions = ctk.CTkFrame(bottom, fg_color="transparent")
-        actions.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 8))
-        self._save_btn = ctk.CTkButton(
-            actions, text="💾 PNG保存", command=self.on_save, state="disabled",
+        run_row = ctk.CTkFrame(ctrl, fg_color="transparent")
+        run_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 6))
+        run_row.columnconfigure(1, weight=1)
+        self._run_btn = ctk.CTkButton(
+            run_row, text="背景除去を実行", command=self.on_run, width=150,
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
         )
-        self._save_btn.pack(side="left")
+        self._run_btn.grid(row=0, column=0, padx=(2, 8), pady=4)
+        self._progress = ctk.CTkProgressBar(run_row, mode="indeterminate")
+        self._progress.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        self._progress.set(0)
         ctk.CTkLabel(
-            actions, textvariable=self.status, text_color="#7a3b5a", anchor="w",
-        ).pack(side="left", padx=12)
+            ctrl, textvariable=self.status, text_color="#7a3b5a", anchor="w",
+        ).grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
 
-        self._dnd_hint = ctk.CTkLabel(
-            bottom, text="", text_color="#a05050", font=ctk.CTkFont(size=11), anchor="w"
+        # ── 右下: 結果エリア（モデルごとに分けて表示）──
+        self._results_area = ctk.CTkScrollableFrame(
+            self, fg_color=PINK["panel"], label_text="結果（モデルごと・🔍で拡大）"
         )
-        self._dnd_hint.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 6))
+        self._results_area.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
+        self._results_area.columnconfigure((0, 1), weight=1)
 
     # ──────────────────────────────────────────
-    #  D&D（埋め込み先がDnD対応ルートのときだけ有効化）
+    #  D&D / 追加
     # ──────────────────────────────────────────
 
     def _enable_dnd(self):
         root = self.winfo_toplevel()
         if DND_FILES is None or not hasattr(root, "TkdndVersion"):
-            self._dnd_hint.configure(
-                text="D&Dは無効です。ドロップエリアのクリックで画像を選べます。"
-            )
+            self._dnd_hint.configure(text="D&D無効。「＋ 画像を追加」で取り込み")
             return
-        for target in (self._drop_area, self._orig_label, self):
+        targets = [self, self._grid]
+        for attr in ("_parent_canvas", "_parent_frame"):
+            w = getattr(self._grid, attr, None)
+            if w is not None:
+                targets.append(w)
+        for target in targets:
             try:
                 target.drop_target_register(DND_FILES)
                 target.dnd_bind("<<Drop>>", self._on_drop)
             except Exception:
                 pass
-        self._dnd_hint.configure(text="画像をドラッグ&ドロップで読み込めます。")
+        self._dnd_hint.configure(text="画像/フォルダをここへD&Dで追加")
 
     def _on_drop(self, event):
-        files = self._parse_dnd_paths(event.data)
-        for f in files:
-            p = Path(f)
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
-                self._load_image(p)
-                return
-        self._set_status("画像ファイルをドロップしてください")
+        self._add_paths(self._parse_dnd_paths(event.data))
 
     @staticmethod
     def _parse_dnd_paths(raw: str):
@@ -194,89 +187,229 @@ class BgRemovalPanel(ctk.CTkFrame):
             out.append(token)
         return out
 
-    # ──────────────────────────────────────────
-    #  読み込み
-    # ──────────────────────────────────────────
-
     def on_browse(self):
-        path = filedialog.askopenfilename(
-            title="背景を除去する画像を選択",
+        files = filedialog.askopenfilenames(
+            title="処理する画像を選択",
             filetypes=[("画像", "*.png *.jpg *.jpeg *.webp *.bmp"), ("すべて", "*.*")],
         )
-        if path:
-            self._load_image(Path(path))
+        if files:
+            self._add_paths(files)
 
-    def _load_image(self, path: Path):
+    def _add_paths(self, raw_paths):
+        added = 0
+        for f in raw_paths:
+            p = Path(f)
+            if p.is_dir():
+                for q in sorted(p.iterdir()):
+                    if q.is_file() and q.suffix.lower() in IMAGE_EXTS and q not in self._image_list:
+                        self._image_list.append(q)
+                        added += 1
+            elif p.is_file() and p.suffix.lower() in IMAGE_EXTS and p not in self._image_list:
+                self._image_list.append(p)
+                added += 1
+        if added:
+            had = self.current_image_path is not None
+            self._grid.refresh(self._image_list)
+            if not had:
+                self._select_image(self._image_list[0])
+            self._set_status(f"{added} 枚追加（計 {len(self._image_list)} 枚）")
+
+    def on_clear(self):
+        self._image_list = []
+        self.current_image_path = None
+        self.original_image = None
+        self._results = {}
+        self._active_models = []
+        self._grid.refresh(self._image_list)
+        self._rebuild_results()
+        self._set_status("一覧をクリアしました")
+
+    # ──────────────────────────────────────────
+    #  画像選択
+    # ──────────────────────────────────────────
+
+    def _select_image(self, path):
         try:
             img = Image.open(path).convert("RGBA")
         except Exception as e:
             self._set_status(f"画像を開けませんでした: {e}")
             return
-        self.current_image_path = path
+        self.current_image_path = Path(path)
         self.original_image = img
-        self._set_image(self._orig_label, self._fit(img, ORIG_PREVIEW), "_orig")
-        # 結果はリセット
-        self.result_image = None
-        self._set_image(self._result_label, None, "_result")
-        self._result_label.configure(text="ここに結果が表示されます")
-        self._save_btn.configure(state="disabled")
-        self._set_status(f"読み込み: {path.name}")
+        self._grid.set_selected(self.current_image_path)
+        self._results = {}
+        self._active_models = []
+        self._rebuild_results()
+        self._set_status(f"選択: {self.current_image_path.name}（モデルを選んで実行）")
 
     # ──────────────────────────────────────────
-    #  背景除去（非同期）
+    #  実行（複数モデルを順に・非同期）
     # ──────────────────────────────────────────
 
     def on_run(self):
         if self._busy:
             return
         if self.current_image_path is None or self.original_image is None:
-            self._set_status("先に画像を読み込んでください")
+            self._set_status("先に画像を追加・選択してください")
+            return
+        models = [name for name in engine.MODEL_NAMES if self._model_vars[name].get()]
+        if not models:
+            self._set_status("モデルを1つ以上選んでください")
             return
         if not engine.rembg_available():
-            self._set_status("rembg が未導入です。pip install \"rembg[gpu,cli]\" を実行してください")
+            self._set_status('rembg が未導入です。pip install "rembg[gpu,cli]" を実行してください')
             return
-        model_name = engine.LABEL_TO_NAME.get(self.model_label.get(), engine.MODEL_NAMES[0])
         self._busy = True
         self._run_btn.configure(state="disabled")
-        self._save_btn.configure(state="disabled")
-        self._set_status("処理中…（初回はモデルDLで時間がかかります）")
+        self._results = {}
+        self._active_models = models
+        self._rebuild_results()  # 元画像＋各モデルの「処理待ち」ペインを並べる
+        self._progress.configure(mode="indeterminate")
+        self._progress.start()
         path = self.current_image_path
-        threading.Thread(
-            target=self._run_worker, args=(path, model_name), daemon=True
-        ).start()
+        threading.Thread(target=self._run_worker, args=(path, models), daemon=True).start()
 
-    def _run_worker(self, path, model_name):
-        try:
-            result = engine.remove_background(path, model_name)
-            self.after(0, self._run_done, result, None)
-        except Exception as e:  # noqa: BLE001  失敗内容をUIに出して落とさない
-            self.after(0, self._run_done, None, e)
+    def _run_worker(self, path, models):
+        total = len(models)
+        for i, model in enumerate(models, 1):
+            label = engine.NAME_TO_LABEL.get(model, model)
+            self.after(0, self._set_status, f"処理中: {label} ({i}/{total})…")
+            try:
+                result = engine.remove_background(path, model)
+                self.after(0, self._model_done, path, model, result, None)
+            except Exception as e:  # noqa: BLE001
+                self.after(0, self._model_done, path, model, None, e)
+        self.after(0, self._run_all_done)
 
-    def _run_done(self, result, error):
+    def _model_done(self, path, model, result, error):
+        # 実行中に別画像へ切り替わっていたら無視（結果の取り違え防止）
+        if path != self.current_image_path:
+            return
+        pane = self._panes.get(model)
+        if error is not None:
+            if pane:
+                pane["label"].configure(image=None, text=f"エラー:\n{error}")
+            return
+        self._results[model] = result
+        if pane:
+            preview = engine.composite_on_checker(self._fit(result, PANE_PREVIEW))
+            self._set_pane_image(pane, preview)
+            pane["full"] = result
+            if pane.get("save_btn") is not None:
+                pane["save_btn"].configure(state="normal")
+            if pane.get("zoom_btn") is not None:
+                pane["zoom_btn"].configure(state="normal")
+
+    def _run_all_done(self):
         self._busy = False
         self._run_btn.configure(state="normal")
-        if error is not None:
-            self._set_status(f"エラー: {error}")
-            return
-        self.result_image = result
-        preview = engine.composite_on_checker(self._fit(result, RESULT_PREVIEW))
-        self._set_image(self._result_label, preview, "_result")
-        self._save_btn.configure(state="normal")
-        self._set_status("完了。PNG保存できます")
+        self._progress.stop()
+        self._progress.set(0)
+        done = len(self._results)
+        total = len(self._active_models)
+        if done == total:
+            self._set_status(f"完了（{done} モデル）。保存するものを選んで💾")
+        else:
+            self._set_status(f"完了：成功 {done} / {total}（失敗あり）")
 
     # ──────────────────────────────────────────
-    #  保存
+    #  結果エリアの構築
     # ──────────────────────────────────────────
 
-    def on_save(self):
-        if self.result_image is None:
-            self._set_status("先に背景除去を実行してください")
+    def _rebuild_results(self):
+        for child in self._results_area.winfo_children():
+            child.destroy()
+        self._panes = {}
+
+        items = []
+        if self.original_image is not None:
+            items.append((_ORIGINAL_KEY, "元画像", False))
+        for model in self._active_models:
+            items.append((model, engine.NAME_TO_LABEL.get(model, model), True))
+
+        if not items:
+            ctk.CTkLabel(
+                self._results_area,
+                text="画像を選び、モデルを選んで「背景除去を実行」",
+            ).grid(row=0, column=0, padx=8, pady=8)
             return
-        model_name = engine.LABEL_TO_NAME.get(self.model_label.get(), "")
-        try:
-            saved = engine.save_png(
-                self.result_image, self.current_image_path, self._output_dir, model_name
+
+        for idx, (key, title, savable) in enumerate(items):
+            r, c = divmod(idx, 2)
+            self._build_pane(r, c, key, title, savable)
+
+    def _build_pane(self, row, col, key, title, savable):
+        frame = ctk.CTkFrame(self._results_area, fg_color="#fff3f9", border_width=1)
+        frame.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
+        frame.columnconfigure(0, weight=1)
+
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+        header.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header, text=title, anchor="w", font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=0, sticky="w")
+        zoom_btn = ctk.CTkButton(
+            header, text="🔍 拡大", width=64, command=lambda k=key: self._zoom(k),
+        )
+        zoom_btn.grid(row=0, column=1, sticky="e")
+
+        label = ctk.CTkLabel(
+            frame, text="処理待ち…", width=PANE_PREVIEW[0], height=PANE_PREVIEW[1],
+        )
+        label.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
+
+        pane = {"frame": frame, "label": label, "zoom_btn": zoom_btn,
+                "ref": None, "prev_ref": None, "full": None, "save_btn": None}
+
+        if savable:
+            save_btn = ctk.CTkButton(
+                frame, text="💾 保存", width=80, state="disabled",
+                command=lambda k=key: self._save(k),
+                fg_color=PINK["button"], hover_color=PINK["button_hover"],
             )
+            save_btn.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 6))
+            pane["save_btn"] = save_btn
+
+        self._panes[key] = pane
+
+        # 元画像はすぐ表示。モデルは既に結果があれば表示。
+        if key == _ORIGINAL_KEY:
+            pane["full"] = self.original_image
+            self._set_pane_image(pane, self._fit(self.original_image, PANE_PREVIEW))
+            zoom_btn.configure(state="normal")
+        elif key in self._results:
+            result = self._results[key]
+            pane["full"] = result
+            self._set_pane_image(pane, engine.composite_on_checker(self._fit(result, PANE_PREVIEW)))
+            zoom_btn.configure(state="normal")
+            if pane["save_btn"] is not None:
+                pane["save_btn"].configure(state="normal")
+        else:
+            zoom_btn.configure(state="disabled")
+
+    # ──────────────────────────────────────────
+    #  拡大・保存
+    # ──────────────────────────────────────────
+
+    def _zoom(self, key):
+        if key == _ORIGINAL_KEY:
+            img = self.original_image
+            title = f"元画像 - {self.current_image_path.name if self.current_image_path else ''}"
+        else:
+            result = self._results.get(key)
+            img = engine.composite_on_checker(result) if result is not None else None
+            title = f"{engine.NAME_TO_LABEL.get(key, key)}"
+        if img is not None:
+            ZoomWindow(self.winfo_toplevel(), img, title=title)
+
+    def _save(self, model):
+        result = self._results.get(model)
+        if result is None:
+            self._set_status("そのモデルの結果がまだありません")
+            return
+        try:
+            saved = engine.save_png(result, self.current_image_path, self._output_dir, model)
         except Exception as e:  # noqa: BLE001
             self._set_status(f"保存に失敗: {e}")
             return
@@ -292,17 +425,11 @@ class BgRemovalPanel(ctk.CTkFrame):
         out.thumbnail(box, Image.LANCZOS)
         return out
 
-    def _set_image(self, label, pil_img, ref_attr):
-        """ラベルへ画像を安全に差し替える（旧参照は1サイクル保持してGCを遅延）。"""
-        if pil_img is None:
-            label.configure(image=None)
-            setattr(self, ref_attr + "_ref_prev", getattr(self, ref_attr + "_ref", None))
-            setattr(self, ref_attr + "_ref", None)
-            return
+    def _set_pane_image(self, pane, pil_img):
         new_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=pil_img.size)
-        label.configure(image=new_img, text="")  # 先に適用（この間 旧参照は生存）
-        setattr(self, ref_attr + "_ref_prev", getattr(self, ref_attr + "_ref", None))
-        setattr(self, ref_attr + "_ref", new_img)
+        pane["label"].configure(image=new_img, text="")  # 先に適用
+        pane["prev_ref"] = pane.get("ref")  # 旧参照を1サイクル保持
+        pane["ref"] = new_img
 
     def _set_status(self, text):
         self.status.set(text)
