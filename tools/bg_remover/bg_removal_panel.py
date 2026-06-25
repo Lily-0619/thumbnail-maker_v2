@@ -59,8 +59,7 @@ class BgRemovalPanel(ctk.CTkFrame):
         self._png_dir = self._output_dir / "PNG"     # 背景除去PNG
         self._on_status = on_status
 
-        self._image_list = []  # 処理対象（ステージング済み）のメモリ上リスト
-        self._staged_sources = set()  # 取り込み済みの元パス（重複ステージング防止）
+        self._image_list = []  # 処理対象（= STAGE_DIR 直下の画像）。フォルダを参照して作る
         self.current_image_path = None
         self.original_image = None  # PIL.Image（選択中の元画像）
         self._results = {}  # {model_name: PIL.Image} 選択中画像の結果
@@ -76,6 +75,10 @@ class BgRemovalPanel(ctk.CTkFrame):
 
         self._build()
         self._enable_dnd()
+        # 起動時に STAGE_DIR（outputs/bg_removal）にある画像を読み込む
+        self._refresh_inputs()
+        if self._image_list:
+            self._select_image(self._image_list[0])
 
     # ──────────────────────────────────────────
     #  Layout
@@ -100,7 +103,7 @@ class BgRemovalPanel(ctk.CTkFrame):
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
         ).pack(side="left", padx=2)
         ctk.CTkButton(
-            btns, text="クリア", width=60, command=self.on_clear,
+            btns, text="🔄 再読込", width=80, command=self.on_refresh,
             fg_color=PINK["accent"], hover_color=PINK["accent_hover"],
             text_color=PINK["accent_text"],
         ).pack(side="left", padx=2)
@@ -201,6 +204,30 @@ class BgRemovalPanel(ctk.CTkFrame):
         if files:
             self._add_paths(files)
 
+    def _scan_inputs(self):
+        """STAGE_DIR（outputs/bg_removal）直下の画像を一覧する。
+        PNG/処理済み等のサブフォルダはファイルでないので自然に除外される。"""
+        d = self._stage_dir
+        if not d.exists():
+            return []
+        return [
+            p for p in sorted(d.iterdir())
+            if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+        ]
+
+    def _refresh_inputs(self):
+        """STAGE_DIR を読み直してグリッドを更新する（選択中は維持）。"""
+        self._image_list = self._scan_inputs()
+        self._grid.refresh(self._image_list)
+        if self.current_image_path in self._image_list:
+            self._grid.set_selected(self.current_image_path)
+
+    def on_refresh(self):
+        self._refresh_inputs()
+        if self.current_image_path not in self._image_list and self._image_list:
+            self._select_image(self._image_list[0])
+        self._set_status(f"再読込（{len(self._image_list)} 枚）")
+
     def _add_paths(self, raw_paths):
         added = 0
         for f in raw_paths:
@@ -211,30 +238,29 @@ class BgRemovalPanel(ctk.CTkFrame):
                         added += 1
             elif p.is_file() and p.suffix.lower() in IMAGE_EXTS and self._stage(p):
                 added += 1
+        had = self.current_image_path is not None
+        self._refresh_inputs()  # フォルダを参照し直す
+        if not had and self._image_list:
+            self._select_image(self._image_list[0])
         if added:
-            had = self.current_image_path is not None
-            self._grid.refresh(self._image_list)
-            if not had and self._image_list:
-                self._select_image(self._image_list[0])
-            self._set_status(f"{added} 枚取り込み → 一時保存（計 {len(self._image_list)} 枚）")
+            self._set_status(
+                f"{added} 枚を outputs/bg_removal に取り込み（計 {len(self._image_list)} 枚）"
+            )
+        else:
+            self._set_status("追加なし（同名が既にあるか画像でない）")
 
-    def _stage(self, src: Path) -> bool:
-        """取り込んだ画像を STAGE_DIR へコピー（一時保存）して対象リストに追加する。"""
-        try:
-            src_res = src.resolve()
-        except Exception:
-            src_res = src
-        if src_res in self._staged_sources:
-            return False  # 同じ元ファイルの重複取り込みは無視
-        dest = self._unique_dest(self._stage_dir, src.name)
+    def _stage(self, src) -> bool:
+        """取り込んだ画像を STAGE_DIR へコピー（一時保存）。同名が既にあれば取り込まない。"""
+        src = Path(src)
+        dest = self._stage_dir / src.name
+        if dest.exists():
+            return False  # 既に同名がある（フォルダ参照なので一覧には出る）
         try:
             self._stage_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
         except Exception as e:  # noqa: BLE001
             self._set_status(f"取り込み失敗: {src.name} ({e})")
             return False
-        self._staged_sources.add(src_res)
-        self._image_list.append(dest)
         return True
 
     @staticmethod
@@ -248,18 +274,6 @@ class BgRemovalPanel(ctk.CTkFrame):
         while (directory / f"{stem}_{i}{suffix}").exists():
             i += 1
         return directory / f"{stem}_{i}{suffix}"
-
-    def on_clear(self):
-        # 一覧の表示だけ消す。一時保存したファイル自体は消さない（非破壊）。
-        self._image_list = []
-        self._staged_sources = set()
-        self.current_image_path = None
-        self.original_image = None
-        self._results = {}
-        self._active_models = []
-        self._grid.refresh(self._image_list)
-        self._rebuild_results()
-        self._set_status("一覧をクリアしました（一時保存ファイルは残ります）")
 
     # ──────────────────────────────────────────
     #  画像選択
@@ -460,17 +474,11 @@ class BgRemovalPanel(ctk.CTkFrame):
                 self._processed_dir.mkdir(parents=True, exist_ok=True)
                 dest = self._unique_dest(self._processed_dir, Path(src).name)
                 shutil.move(str(src), str(dest))
-                self._drop_current_from_grid()
+                self._refresh_inputs()  # フォルダから消えたので一覧を更新（結果ペインは残す）
                 moved = " / 元画像→処理済み"
             except Exception as e:  # noqa: BLE001
                 moved = f" / 元画像の移動に失敗({e})"
         self._set_status(f"PNG保存: {saved.name}{moved}")
-
-    def _drop_current_from_grid(self):
-        """保存済みの元画像を一覧から外す（結果ペインは残すので別モデルも保存可）。"""
-        if self.current_image_path in self._image_list:
-            self._image_list.remove(self.current_image_path)
-        self._grid.refresh(self._image_list)
 
     # ──────────────────────────────────────────
     #  ヘルパー
