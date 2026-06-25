@@ -23,7 +23,14 @@ else:
     PROJECT_ROOT = HERE.parent
     OUTPUT_DIR = HERE.parent / "outputs"
 
+# 取り込んだ画像の一時保存先（ステージング）。OUTPUT_DIR 直下に置く。
+STAGE_DIR = OUTPUT_DIR
+# 背景除去できたら、元画像（ステージング分）を「処理済み」へ、PNGを「PNG」へ振り分ける。
+PROCESSED_DIR = OUTPUT_DIR / "処理済み"
+PNG_DIR = OUTPUT_DIR / "PNG"
+
 
 def ensure_dirs():
-    """出力先フォルダを保証する（なければ作る・あっても壊さない）。"""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    """出力先フォルダ一式を保証する（なければ作る・あっても壊さない）。"""
+    for d in (OUTPUT_DIR, STAGE_DIR, PROCESSED_DIR, PNG_DIR):
+        d.mkdir(parents=True, exist_ok=True)

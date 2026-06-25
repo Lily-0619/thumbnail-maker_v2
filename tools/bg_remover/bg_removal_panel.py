@@ -12,6 +12,7 @@ bg_removal_panel.py
 2枚目以降が出ない CTkImage 不具合（image pyimageN doesn't exist）を防ぐ。
 """
 
+import shutil
 import threading
 from pathlib import Path
 from tkinter import filedialog
@@ -52,9 +53,14 @@ class BgRemovalPanel(ctk.CTkFrame):
     def __init__(self, master, output_dir=None, on_status=None, **kwargs):
         super().__init__(master, **kwargs)
         self._output_dir = Path(output_dir) if output_dir else paths.OUTPUT_DIR
+        # 出力ベースから振り分け先を導出（埋め込みで output_dir を変えても整合する）
+        self._stage_dir = self._output_dir          # 取り込んだ画像の一時保存
+        self._processed_dir = self._output_dir / "処理済み"  # 保存後の元画像
+        self._png_dir = self._output_dir / "PNG"     # 背景除去PNG
         self._on_status = on_status
 
-        self._image_list = []  # 処理対象（D&D/追加した画像）のメモリ上リスト
+        self._image_list = []  # 処理対象（ステージング済み）のメモリ上リスト
+        self._staged_sources = set()  # 取り込み済みの元パス（重複ステージング防止）
         self.current_image_path = None
         self.original_image = None  # PIL.Image（選択中の元画像）
         self._results = {}  # {model_name: PIL.Image} 選択中画像の結果
@@ -201,28 +207,59 @@ class BgRemovalPanel(ctk.CTkFrame):
             p = Path(f)
             if p.is_dir():
                 for q in sorted(p.iterdir()):
-                    if q.is_file() and q.suffix.lower() in IMAGE_EXTS and q not in self._image_list:
-                        self._image_list.append(q)
+                    if q.is_file() and q.suffix.lower() in IMAGE_EXTS and self._stage(q):
                         added += 1
-            elif p.is_file() and p.suffix.lower() in IMAGE_EXTS and p not in self._image_list:
-                self._image_list.append(p)
+            elif p.is_file() and p.suffix.lower() in IMAGE_EXTS and self._stage(p):
                 added += 1
         if added:
             had = self.current_image_path is not None
             self._grid.refresh(self._image_list)
-            if not had:
+            if not had and self._image_list:
                 self._select_image(self._image_list[0])
-            self._set_status(f"{added} 枚追加（計 {len(self._image_list)} 枚）")
+            self._set_status(f"{added} 枚取り込み → 一時保存（計 {len(self._image_list)} 枚）")
+
+    def _stage(self, src: Path) -> bool:
+        """取り込んだ画像を STAGE_DIR へコピー（一時保存）して対象リストに追加する。"""
+        try:
+            src_res = src.resolve()
+        except Exception:
+            src_res = src
+        if src_res in self._staged_sources:
+            return False  # 同じ元ファイルの重複取り込みは無視
+        dest = self._unique_dest(self._stage_dir, src.name)
+        try:
+            self._stage_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        except Exception as e:  # noqa: BLE001
+            self._set_status(f"取り込み失敗: {src.name} ({e})")
+            return False
+        self._staged_sources.add(src_res)
+        self._image_list.append(dest)
+        return True
+
+    @staticmethod
+    def _unique_dest(directory, name: str) -> Path:
+        directory = Path(directory)
+        dest = directory / name
+        if not dest.exists():
+            return dest
+        stem, suffix = Path(name).stem, Path(name).suffix
+        i = 1
+        while (directory / f"{stem}_{i}{suffix}").exists():
+            i += 1
+        return directory / f"{stem}_{i}{suffix}"
 
     def on_clear(self):
+        # 一覧の表示だけ消す。一時保存したファイル自体は消さない（非破壊）。
         self._image_list = []
+        self._staged_sources = set()
         self.current_image_path = None
         self.original_image = None
         self._results = {}
         self._active_models = []
         self._grid.refresh(self._image_list)
         self._rebuild_results()
-        self._set_status("一覧をクリアしました")
+        self._set_status("一覧をクリアしました（一時保存ファイルは残ります）")
 
     # ──────────────────────────────────────────
     #  画像選択
@@ -408,12 +445,32 @@ class BgRemovalPanel(ctk.CTkFrame):
         if result is None:
             self._set_status("そのモデルの結果がまだありません")
             return
+        src = self.current_image_path
+        # 1) 背景除去PNGを PNG フォルダへ保存
         try:
-            saved = engine.save_png(result, self.current_image_path, self._output_dir, model)
+            saved = engine.save_png(result, src, self._png_dir, model)
         except Exception as e:  # noqa: BLE001
-            self._set_status(f"保存に失敗: {e}")
+            self._set_status(f"PNG保存に失敗: {e}")
             return
-        self._set_status(f"保存しました: {saved}")
+        # 2) 元画像（ステージング分）を処理済みへ移動。
+        #    まだ残っているときだけ動かすので、同じ画像で複数モデルを保存しても二重移動しない。
+        moved = ""
+        if src is not None and Path(src).exists():
+            try:
+                self._processed_dir.mkdir(parents=True, exist_ok=True)
+                dest = self._unique_dest(self._processed_dir, Path(src).name)
+                shutil.move(str(src), str(dest))
+                self._drop_current_from_grid()
+                moved = " / 元画像→処理済み"
+            except Exception as e:  # noqa: BLE001
+                moved = f" / 元画像の移動に失敗({e})"
+        self._set_status(f"PNG保存: {saved.name}{moved}")
+
+    def _drop_current_from_grid(self):
+        """保存済みの元画像を一覧から外す（結果ペインは残すので別モデルも保存可）。"""
+        if self.current_image_path in self._image_list:
+            self._image_list.remove(self.current_image_path)
+        self._grid.refresh(self._image_list)
 
     # ──────────────────────────────────────────
     #  ヘルパー

@@ -108,8 +108,9 @@ class BgRemoverApp(DnDCTk):
             self, text="背景除去（rembg）", font=ctk.CTkFont(size=18, weight="bold")
         ).pack(anchor="w", padx=16, pady=(12, 0))
         ctk.CTkLabel(
-            self, text=f"保存先：{paths.OUTPUT_DIR}", font=ctk.CTkFont(size=11),
-            text_color="#7a3b5a", anchor="w",
+            self,
+            text=f"出力：{paths.OUTPUT_DIR}　（取り込み→一時保存／💾でPNGは PNG\\・元画像は 処理済み\\ へ）",
+            font=ctk.CTkFont(size=11), text_color="#7a3b5a", anchor="w",
         ).pack(anchor="w", padx=16, pady=(0, 6))
 
         self.panel = BgRemovalPanel(self, output_dir=paths.OUTPUT_DIR)
