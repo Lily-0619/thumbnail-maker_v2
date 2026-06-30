@@ -12,12 +12,10 @@ from pathlib import Path
 
 from PIL import Image
 
-# 対応モデル（rembg指定名, 画面表示ラベル）。プルダウンの並び順でもある。
+# 対応モデル（rembg指定名, 画面表示ラベル）。並び順でもある。
 MODELS = [
     ("birefnet-general", "birefnet-general（推奨・高精度）"),
     ("birefnet-massive", "birefnet-massive（最高精度・重い）"),
-    ("isnet-general-use", "isnet-general-use（安定）"),
-    ("u2net", "u2net（軽量・速い）"),
 ]
 MODEL_NAMES = [name for name, _label in MODELS]
 LABEL_TO_NAME = {label: name for name, label in MODELS}
