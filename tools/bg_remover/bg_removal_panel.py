@@ -24,11 +24,13 @@ try:
     # パッケージとして import された場合（メインアプリ埋め込み等）
     from . import engine, paths
     from .widgets import IMAGE_EXTS, ImageGrid, ZoomWindow
+    from .mask_editor import MaskEditorWindow
 except ImportError:
     # 単体スクリプトから import された場合（独立ウィンドウ／汎用ツール配置）
     import engine
     import paths
     from widgets import IMAGE_EXTS, ImageGrid, ZoomWindow
+    from mask_editor import MaskEditorWindow
 
 try:
     from tkinterdnd2 import DND_FILES
@@ -131,14 +133,18 @@ class BgRemovalPanel(ctk.CTkFrame):
 
         run_row = ctk.CTkFrame(ctrl, fg_color="transparent")
         run_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 6))
-        run_row.columnconfigure(1, weight=1)
+        run_row.columnconfigure(2, weight=1)
         self._run_btn = ctk.CTkButton(
-            run_row, text="背景除去を実行", command=self.on_run, width=150,
+            run_row, text="背景除去を実行", command=self.on_run, width=140,
             fg_color=PINK["button"], hover_color=PINK["button_hover"],
         )
-        self._run_btn.grid(row=0, column=0, padx=(2, 8), pady=4)
+        self._run_btn.grid(row=0, column=0, padx=(2, 6), pady=4)
+        ctk.CTkButton(
+            run_row, text="🧹 プレビューをリセット", command=self.on_reset_preview, width=170,
+            fg_color=PINK["accent"], hover_color=PINK["accent_hover"], text_color=PINK["accent_text"],
+        ).grid(row=0, column=1, padx=6, pady=4)
         self._progress = ctk.CTkProgressBar(run_row, mode="indeterminate")
-        self._progress.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        self._progress.grid(row=0, column=2, sticky="ew", padx=4, pady=4)
         self._progress.set(0)
         ctk.CTkLabel(
             ctrl, textvariable=self.status, text_color="#7a3b5a", anchor="w",
@@ -350,6 +356,8 @@ class BgRemovalPanel(ctk.CTkFrame):
                 pane["save_btn"].configure(state="normal")
             if pane.get("zoom_btn") is not None:
                 pane["zoom_btn"].configure(state="normal")
+            if pane.get("edit_btn") is not None:
+                pane["edit_btn"].configure(state="normal")
 
     def _run_all_done(self):
         self._busy = False
@@ -359,9 +367,16 @@ class BgRemovalPanel(ctk.CTkFrame):
         done = len(self._results)
         total = len(self._active_models)
         if done == total:
-            self._set_status(f"完了（{done} モデル）。保存するものを選んで💾")
+            self._set_status(f"完了（{done} モデル）。保存/手動編集できます")
         else:
             self._set_status(f"完了：成功 {done} / {total}（失敗あり）")
+
+    def on_reset_preview(self):
+        """結果プレビューをリセット（実行前の状態＝元画像ペインのみに戻す）。"""
+        self._results = {}
+        self._active_models = []
+        self._rebuild_results()
+        self._set_status("プレビューをリセットしました")
 
     # ──────────────────────────────────────────
     #  結果エリアの構築
@@ -411,16 +426,27 @@ class BgRemovalPanel(ctk.CTkFrame):
         label.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
         pane = {"frame": frame, "label": label, "zoom_btn": zoom_btn,
-                "ref": None, "prev_ref": None, "full": None, "save_btn": None}
+                "ref": None, "prev_ref": None, "full": None,
+                "save_btn": None, "edit_btn": None}
 
         if savable:
+            footer = ctk.CTkFrame(frame, fg_color="transparent")
+            footer.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 6))
             save_btn = ctk.CTkButton(
-                frame, text="💾 保存", width=80, state="disabled",
+                footer, text="💾 保存", width=78, state="disabled",
                 command=lambda k=key: self._save(k),
                 fg_color=PINK["button"], hover_color=PINK["button_hover"],
             )
-            save_btn.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 6))
+            save_btn.pack(side="left", padx=(0, 4))
+            edit_btn = ctk.CTkButton(
+                footer, text="✏️ 手動編集", width=100, state="disabled",
+                command=lambda k=key: self._edit(k),
+                fg_color=PINK["accent"], hover_color=PINK["accent_hover"],
+                text_color=PINK["accent_text"],
+            )
+            edit_btn.pack(side="left", padx=4)
             pane["save_btn"] = save_btn
+            pane["edit_btn"] = edit_btn
 
         self._panes[key] = pane
 
@@ -436,6 +462,8 @@ class BgRemovalPanel(ctk.CTkFrame):
             zoom_btn.configure(state="normal")
             if pane["save_btn"] is not None:
                 pane["save_btn"].configure(state="normal")
+            if pane["edit_btn"] is not None:
+                pane["edit_btn"].configure(state="normal")
         else:
             zoom_btn.configure(state="disabled")
 
@@ -479,6 +507,32 @@ class BgRemovalPanel(ctk.CTkFrame):
             except Exception as e:  # noqa: BLE001
                 moved = f" / 元画像の移動に失敗({e})"
         self._set_status(f"PNG保存: {saved.name}{moved}")
+
+    def _edit(self, model):
+        result = self._results.get(model)
+        if result is None or self.original_image is None:
+            self._set_status("編集できる結果がありません")
+            return
+        MaskEditorWindow(
+            self.winfo_toplevel(),
+            original=self.original_image,
+            result=result,
+            title=f"手動切り抜き - {engine.NAME_TO_LABEL.get(model, model)}",
+            on_apply=lambda edited, m=model: self._apply_edited(m, edited),
+        )
+
+    def _apply_edited(self, model, edited):
+        """エディタの編集結果をそのモデルの結果として反映（保存は💾で）。"""
+        self._results[model] = edited
+        pane = self._panes.get(model)
+        if pane is not None:
+            pane["full"] = edited
+            self._set_pane_image(
+                pane, engine.composite_on_checker(self._fit(edited, PANE_PREVIEW))
+            )
+        self._set_status(
+            f"手動編集を反映: {engine.NAME_TO_LABEL.get(model, model)}（💾で保存）"
+        )
 
     # ──────────────────────────────────────────
     #  ヘルパー
