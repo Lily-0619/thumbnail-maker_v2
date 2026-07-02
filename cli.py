@@ -22,6 +22,8 @@ UIなしでコマンドラインからサムネイルを生成するスクリプ
 import argparse
 from pathlib import Path
 
+from core import PROJECT_ROOT
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="黒砂漠モバイル サムネイル生成CLI")
@@ -94,6 +96,8 @@ def main():
     )
 
     out_path = Path(args.out)
+    if not out_path.is_absolute():
+        out_path = PROJECT_ROOT / out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(out_path), "PNG")
     print(f"[完了] 出力: {out_path.resolve()}")

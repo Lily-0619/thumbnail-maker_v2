@@ -6,8 +6,10 @@ template.py
 import json
 from pathlib import Path
 
+from core import PROJECT_ROOT
 
-TEMPLATES_DIR = Path("templates")
+
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
 
 
 def load_template(template_name: str) -> dict:

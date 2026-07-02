@@ -4,21 +4,22 @@ composer.py
 レイヤーを順番に合成してサムネイルを生成する。
 """
 
-import os
 import random
 from pathlib import Path
 
 from PIL import Image
 
+from core import PROJECT_ROOT
 from core.text_renderer import render_all_text
 
 
 BACKGROUND_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-DEFAULT_BACKGROUND_DIR = Path("assets/backgrounds")
+DEFAULT_BACKGROUND_DIR = PROJECT_ROOT / "assets" / "backgrounds"
 
 
 def pick_random_background(background_dir: Path = DEFAULT_BACKGROUND_DIR) -> str:
     """背景未指定時に所定フォルダからランダムな背景画像を選ぶ。"""
+    background_dir = _project_path(background_dir)
     if not background_dir.exists():
         return ""
     candidates = [
@@ -35,11 +36,21 @@ def pick_random_background(background_dir: Path = DEFAULT_BACKGROUND_DIR) -> str
 # ──────────────────────────────────────────
 
 
+def _project_path(path: str | Path) -> Path:
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
 def load_image_rgba(path: str) -> Image.Image | None:
     """画像をRGBAで読み込む。存在しなければNoneを返す。"""
-    if not path or not os.path.exists(path):
+    if not path:
         return None
-    img = Image.open(path).convert("RGBA")
+    resolved_path = _project_path(path)
+    if not resolved_path.exists():
+        return None
+    img = Image.open(resolved_path).convert("RGBA")
     return img
 
 
