@@ -1,5 +1,4 @@
 # Byte-compiled / optimized / DLL files
-__pycache__/
 *.py[cod]
 *$py.class
 
@@ -14,18 +13,12 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
 var/
 wheels/
 *.egg-info/
-font/
-material/
-outputs/
-.venv/
-__pycache__/
 .installed.cfg
 *.egg
 MANIFEST
@@ -90,7 +83,6 @@ celerybeat-schedule
 
 # Environments
 .env
-.venv
 env/
 venv/
 ENV/
@@ -116,6 +108,8 @@ material/
 outputs/
 .venv/
 **/__pycache__/
+config/effect_sorter_dict.json
+config/effect_sorter_words.json
 
 # AI generated images
 assets/backgrounds/ai/*.png
