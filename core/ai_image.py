@@ -80,6 +80,21 @@ def load_ai_config() -> dict:
         return json.load(f)
 
 
+def save_ai_config(config: dict) -> None:
+    """設定を config/ai_config.json へアトミックに書き戻す。
+
+    _comment 系キーや未知のキーも config に含まれていればそのまま保持される
+    (呼び出し側は load_ai_config() で読んだ dict を書き換えて渡すこと)。
+    一時ファイル→os.replace で差し替え、書き込み途中の破損を防ぐ。
+    """
+    AI_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = AI_CONFIG_PATH.with_name(AI_CONFIG_PATH.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, AI_CONFIG_PATH)
+
+
 def load_ai_prompts() -> dict:
     if not AI_PROMPTS_PATH.exists():
         raise AIImageError(f"プロンプト設定が見つかりません: {AI_PROMPTS_PATH}")
@@ -456,6 +471,29 @@ def _comfyui_pick_checkpoint(url: str, cfg: dict, timeout: int) -> str:
     return choices[0]
 
 
+def list_comfyui_checkpoints(config: dict | None = None) -> list[str]:
+    """ComfyUIから利用可能なモデル(checkpoint)名の一覧を取得する。
+
+    未接続・エラー時は空リストを返す(例外は投げない)。設定GUIの
+    ドロップダウン用。
+    """
+    try:
+        config = config or load_ai_config()
+    except AIImageError:
+        return []
+    cfg = config.get("comfyui", {})
+    url = _comfyui_url(cfg)
+    if not _is_comfyui_running(url, timeout=3):
+        return []
+    try:
+        resp = requests.get(f"{url}/object_info/CheckpointLoaderSimple", timeout=15)
+        resp.raise_for_status()
+        info = resp.json()
+        return list(info["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0])
+    except Exception:
+        return []
+
+
 def _comfyui_upload_image(url: str, image_path: Path, timeout: int) -> str:
     """参考画像をComfyUIのinputにアップロードし、LoadImage用のファイル名を返す。"""
     mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(
@@ -686,6 +724,32 @@ def _black_to_alpha(img: Image.Image) -> Image.Image:
     return img
 
 
+def _effect_to_alpha(img: Image.Image, config: dict) -> Image.Image:
+    """生成されたエフェクト画像を透過PNG化する。
+
+    config の effect_transparency.method で方式を選ぶ:
+      - black_to_alpha(標準): 黒→透過。発光エフェクト向き。暗い色は消えやすい。
+      - rembg            : AI切り抜き(tools/bg_remover のエンジンを流用)。
+                           暗い色のエフェクトも残せるが rembg の導入が必要。
+    rembg が未導入・失敗した場合は black_to_alpha に自動フォールバックする
+    (画像は必ず返す。エラーで生成を止めない)。
+    """
+    eff_cfg = config.get("effect_transparency", {})
+    method = str(eff_cfg.get("method", "black_to_alpha")).strip().lower()
+    if method == "rembg":
+        model_name = str(eff_cfg.get("rembg_model", "birefnet-general")).strip() or "birefnet-general"
+        try:
+            if str(PROJECT_ROOT) not in sys.path:
+                sys.path.insert(0, str(PROJECT_ROOT))
+            from tools.bg_remover import engine as bg_engine
+            if bg_engine.rembg_available():
+                return bg_engine.remove_background_image(img, model_name)
+            print("[警告] rembg が未導入のため黒→透過方式で代替します。導入: pip install rembg")
+        except Exception as e:
+            print(f"[警告] rembg での切り抜きに失敗したため黒→透過方式で代替します: {e}")
+    return _black_to_alpha(img)
+
+
 def _safe_slug(value: str) -> str:
     value = value.strip().replace(" ", "_").replace("　", "_")
     return re.sub(r"[^0-9A-Za-z_\-ぁ-んァ-ヶ一-龠]+", "", value) or "image"
@@ -757,19 +821,19 @@ def generate_effect(effect_type: str) -> Path:
     if provider == "comfyui":
         reference = find_reference_image(effect_type, config)
         img = _generate_comfyui(prompt + ", pure black background", negative, config, init_image=reference)
-        img = _black_to_alpha(img)
+        img = _effect_to_alpha(img, config)
     elif provider == "sdwebui":
         reference = find_reference_image(effect_type, config)
         img = _generate_sdwebui(prompt + ", pure black background", negative, config, init_image=reference)
-        img = _black_to_alpha(img)
+        img = _effect_to_alpha(img, config)
     elif provider == "stability":
-        img = _black_to_alpha(_generate_stability(prompt + " on a pure black background", negative, config))
+        img = _effect_to_alpha(_generate_stability(prompt + " on a pure black background", negative, config), config)
     elif provider == "openai":
         reference = find_reference_image(effect_type, config)
         img = _generate_openai(prompt, config, transparent=True, reference_path=reference)
         if "A" not in img.getbands() or img.convert("RGBA").getextrema()[3] == (255, 255):
-            # 万一透過になっていない場合は黒→透過変換でフォールバック
-            img = _black_to_alpha(img)
+            # 万一透過になっていない場合は設定の透過化方式でフォールバック
+            img = _effect_to_alpha(img, config)
     else:
         raise AIImageError(f"不明なprovider設定です: {provider} (comfyui / sdwebui / stability / openai のいずれか)")
 
@@ -824,6 +888,21 @@ def check_setup() -> str:
             lines.append(f"・WebUI接続({url}) : OK")
         except Exception:
             lines.append(f"・WebUI接続({url}) : NG(WebUIを --api 付きで起動してください)")
+
+    eff_cfg = config.get("effect_transparency", {})
+    eff_method = str(eff_cfg.get("method", "black_to_alpha")).strip().lower()
+    if eff_method == "rembg":
+        try:
+            if str(PROJECT_ROOT) not in sys.path:
+                sys.path.insert(0, str(PROJECT_ROOT))
+            from tools.bg_remover import engine as bg_engine
+            rembg_ok = bg_engine.rembg_available()
+        except Exception:
+            rembg_ok = False
+        status = "OK" if rembg_ok else "NG(rembg未導入 → 黒→透過方式で代替されます)"
+        lines.append(f"・エフェクト透過化        : rembg({eff_cfg.get('rembg_model', 'birefnet-general')}) {status}")
+    else:
+        lines.append("・エフェクト透過化        : black_to_alpha(黒→透過・標準)")
 
     sample_found = False
     for sample_dir in config.get("sample_dirs", []):

@@ -67,6 +67,12 @@
   "background_output_dir": "assets/backgrounds/ai",
   "effect_output_dir": "assets/effects/ai",
 
+  "_comment_effect_transparency": "エフェクトの透過化方式。black_to_alpha=黒背景→透過(発光系向き・標準・追加導入なし) / rembg=AI切り抜き(暗い色のエフェクトも残せる。pip install rembg が必要。未導入時は自動で black_to_alpha に戻る)。rembg_model は tools/bg_remover と同じモデル名。",
+  "effect_transparency": {
+    "method": "black_to_alpha",
+    "rembg_model": "birefnet-general"
+  },
+
   "_comment_samples": "後方エフェクトの参考画像を探すフォルダ(上から優先)。見つかるとその雰囲気に寄せて生成する。",
   "sample_dirs": ["material/サンプル", "material/sample", "material/samples"],
   "use_sample_reference": true,

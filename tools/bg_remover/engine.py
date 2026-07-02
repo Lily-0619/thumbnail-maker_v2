@@ -51,6 +51,21 @@ def remove_background(input_path, model_name: str) -> Image.Image:
     return Image.open(io.BytesIO(output_data)).convert("RGBA")
 
 
+def remove_background_image(image: Image.Image, model_name: str) -> Image.Image:
+    """PIL Image を直接受け取って背景除去し、RGBA の PIL Image を返す。
+
+    ファイルを経由せずメモリ上で処理する版。AI生成直後のエフェクト画像の
+    切り抜き（core/ai_image.py）などから使う。
+    """
+    from rembg import remove  # 遅延import
+
+    session = _get_session(model_name)
+    buf = io.BytesIO()
+    image.convert("RGBA").save(buf, format="PNG")
+    output_data = remove(buf.getvalue(), session=session)
+    return Image.open(io.BytesIO(output_data)).convert("RGBA")
+
+
 def make_checker(
     width: int,
     height: int,
