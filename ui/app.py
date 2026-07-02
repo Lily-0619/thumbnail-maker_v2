@@ -18,7 +18,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
 from core import ai_image
-from core.composer import build_asset_element_bounds, compose_thumbnail, pick_random_background
+from core.composer import build_asset_element_bounds, compose_base, pick_random_background
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
     DEFAULT_COMMON_FONT_PATH,
@@ -26,6 +26,7 @@ from core.text_renderer import (
     LANGUAGE_FONT_CATEGORIES,
     TEXT_ELEMENT_LABELS,
     build_text_element_bounds,
+    render_all_text,
 )
 from ui.preview import PreviewPanel
 
@@ -202,6 +203,10 @@ class ThumbnailApp(ctk.CTk):
         self._preview_image = None
         # 背景未指定時に一度だけ選んだランダム背景を保持し、再プレビューで変わらないようにする
         self._auto_bg_path = None
+        # ベースレイヤー（背景+暗色+エフェクト+キャラ）のキャッシュ。
+        # テキストだけの変更ではベースを再合成せず、文字の再描画のみで済ませる。
+        self._base_cache_key = None
+        self._base_cache_image = None
         self._preview_text_elements = []
         self._preview_asset_elements = []
         self._character_preview_image = None
@@ -402,6 +407,14 @@ class ThumbnailApp(ctk.CTk):
             text="Effect only",
             command=lambda: self._ai_generate(gen_bg=False, gen_effect=True),
         ).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ctk.CTkButton(
+            parent,
+            text="⚙️ AI Settings (provider / model / hires)",
+            height=32,
+            fg_color="#9a8aa0",
+            hover_color="#7d6e84",
+            command=self._open_ai_settings,
+        ).pack(fill="x", **pad)
         ctk.CTkLabel(parent, textvariable=self.ai_status, text_color="#e7b93e", wraplength=430, justify="left").pack(
             anchor="w", **pad
         )
@@ -707,6 +720,12 @@ class ThumbnailApp(ctk.CTk):
             messagebox.showwarning("ComfyUI Startup", error)
         else:
             self.ai_status.set(message)
+
+    def _open_ai_settings(self):
+        """AI設定ダイアログ(config/ai_config.json の編集)を開く。"""
+        from ui.ai_settings import AISettingsDialog
+
+        AISettingsDialog(self, on_saved=lambda: self.ai_status.set("AI settings saved."))
 
     # ──────────────────────────────────────────
     #  File selection
@@ -1257,11 +1276,66 @@ class ThumbnailApp(ctk.CTk):
             return
         self._preview()
 
+    def _base_cache_key_from(self, params: dict) -> tuple:
+        """ベースレイヤーの見た目に影響する全パラメータからキャッシュキーを作る。
+
+        ここに含まれる値が1つでも変わったらベースを再合成する。
+        テキスト関連（位置・サイズ・フォント・文言）は含めない＝テキスト変更では
+        キャッシュが再利用される。
+        """
+        template = params["template"]
+        effect_cfg = template.get("back_effect", template.get("effect", {}))
+        char_cfg = template.get("character", {})
+        bg_cfg = template.get("background", {})
+        return (
+            params["bg_path"],
+            params["char_path"],
+            params["effect_path"],
+            bg_cfg.get("overlay_opacity", 0.3),
+            effect_cfg.get("opacity", 0.85),
+            effect_cfg.get("x", 0),
+            effect_cfg.get("y", 0),
+            effect_cfg.get("scale", 1.0),
+            char_cfg.get("position", "right"),
+            char_cfg.get("scale", 1.0),
+            char_cfg.get("offset_x", 0),
+            char_cfg.get("offset_y", 0),
+        )
+
+    def _compose_with_base_cache(self, params: dict) -> Image.Image:
+        """ベースレイヤーをキャッシュしつつ全体を合成する。
+
+        テキストだけの変更（ドラッグ・矢印キー・サイズ変更）では、キャッシュ済み
+        ベースのコピーに文字を再描画するだけで済むため、応答が大きく速くなる。
+        描画関数はベース画像を直接書き換えるため、必ず copy() を渡す。
+        """
+        base_key = self._base_cache_key_from(params)
+        if base_key != self._base_cache_key or self._base_cache_image is None:
+            self._base_cache_image = compose_base(
+                params["bg_path"],
+                params["char_path"],
+                params["effect_path"],
+                params["template"],
+            )
+            self._base_cache_key = base_key
+
+        canvas = render_all_text(
+            self._base_cache_image.copy(),
+            params["date_str"],
+            params["node_name"],
+            params["guilds"],
+            params["template"],
+            params["font_path"],
+            guild_font_paths=params["guild_font_paths"],
+            language_font_paths=params["language_font_paths"],
+        )
+        return canvas.convert("RGB")
+
     def _preview(self):
         params = self._collect_params()
         params["bg_path"] = self._effective_bg_path(params["bg_path"])
         try:
-            img = compose_thumbnail(**params)
+            img = self._compose_with_base_cache(params)
             self._preview_image = img
             self.preview.show(img)
             asset_elements = build_asset_element_bounds(

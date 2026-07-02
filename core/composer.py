@@ -277,37 +277,28 @@ def build_asset_element_bounds(
 # ──────────────────────────────────────────
 
 
-def compose_thumbnail(
+def compose_base(
     bg_path: str,
     char_path: str,
     effect_path: str,
-    date_str: str,
-    node_name: str,
-    guilds: list,
     template: dict,
-    font_path: str,
-    guild_font_paths: list | None = None,
-    language_font_paths: dict | None = None,
     canvas_w: int = 1920,
     canvas_h: int = 1080,
 ) -> Image.Image:
     """
-    全レイヤーを合成してサムネイルを生成する。
+    テキストを除くベースレイヤー（背景〜キャラクター）を合成する。
 
     レイヤー順:
       1. 背景画像
       2. 暗色補正
       3. 後方エフェクト
       4. キャラクター画像
-      5. 前景エフェクト（将来追加）
-      6. 日付
-      7. 拠点名
-      8. Node War
-      9. ギルド名
-      10. 右下表示テキスト
+
+    ここまでは文字の位置・サイズ変更で変わらないため、UI側で結果を
+    キャッシュしてテキストだけ再描画すると、ドラッグ時の再合成が速くなる。
 
     Returns:
-        合成済み PIL Image（RGBモード, 1920x1080）
+        合成済み PIL Image（RGBAモード）
     """
     selected_bg_path = bg_path or pick_random_background()
     bg = load_image_rgba(selected_bg_path)
@@ -341,6 +332,43 @@ def compose_thumbnail(
             offset_y=char_cfg.get("offset_y", 0),
         )
 
+    return canvas
+
+
+def compose_thumbnail(
+    bg_path: str,
+    char_path: str,
+    effect_path: str,
+    date_str: str,
+    node_name: str,
+    guilds: list,
+    template: dict,
+    font_path: str,
+    guild_font_paths: list | None = None,
+    language_font_paths: dict | None = None,
+    canvas_w: int = 1920,
+    canvas_h: int = 1080,
+) -> Image.Image:
+    """
+    全レイヤーを合成してサムネイルを生成する。
+
+    レイヤー順:
+      1. 背景画像
+      2. 暗色補正
+      3. 後方エフェクト
+      4. キャラクター画像
+      5. 前景エフェクト（将来追加）
+      6. 日付
+      7. 拠点名
+      8. Node War
+      9. ギルド名
+      10. 右下表示テキスト
+
+    Returns:
+        合成済み PIL Image（RGBモード, 1920x1080）
+    """
+    canvas = compose_base(bg_path, char_path, effect_path, template, canvas_w, canvas_h)
+
     canvas = render_all_text(
         canvas,
         date_str,
@@ -356,14 +384,14 @@ def compose_thumbnail(
 
 
 def _make_default_bg(w: int, h: int) -> Image.Image:
-    """背景素材がない場合のフォールバック用グラデーション背景。"""
-    image = Image.new("RGBA", (w, h))
-    pixels = image.load()
+    """背景素材がない場合のフォールバック用グラデーション背景。
+
+    縦1pxのグラデーションを作って横に引き伸ばす（全ピクセルを
+    Pythonループで塗るより桁違いに速い）。
+    """
+    gradient = Image.new("RGBA", (1, h))
+    pixels = gradient.load()
     for y in range(h):
         ratio = y / h
-        r = int(10 + 20 * ratio)
-        g = int(5 + 10 * ratio)
-        b = int(30 + 40 * ratio)
-        for x in range(w):
-            pixels[x, y] = (r, g, b, 255)
-    return image
+        pixels[0, y] = (int(10 + 20 * ratio), int(5 + 10 * ratio), int(30 + 40 * ratio), 255)
+    return gradient.resize((w, h), Image.NEAREST)
