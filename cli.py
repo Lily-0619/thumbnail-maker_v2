@@ -22,7 +22,7 @@ UIなしでコマンドラインからサムネイルを生成するスクリプ
 import argparse
 from pathlib import Path
 
-from core import PROJECT_ROOT
+from core.paths import PROJECT_ROOT
 
 
 def parse_args():

@@ -6,7 +6,7 @@ template.py
 import json
 from pathlib import Path
 
-from core import PROJECT_ROOT
+from core.paths import PROJECT_ROOT
 
 
 TEMPLATES_DIR = PROJECT_ROOT / "templates"

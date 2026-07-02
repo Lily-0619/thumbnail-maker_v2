@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from core import PROJECT_ROOT
+from core.paths import PROJECT_ROOT
 from core.text_renderer import render_all_text
 
 

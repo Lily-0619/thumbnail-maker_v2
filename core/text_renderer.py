@@ -6,7 +6,7 @@ text_renderer.py
 
 from pathlib import Path
 
-from core import PROJECT_ROOT
+from core.paths import PROJECT_ROOT
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
