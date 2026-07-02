@@ -17,7 +17,7 @@ import tkinter.font as tkfont
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
-from core import ai_image
+from core import __version__, ai_image
 from core.composer import build_asset_element_bounds, compose_thumbnail, pick_random_background
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
@@ -184,7 +184,7 @@ class CharacterPickerDialog(ctk.CTkToplevel):
 class ThumbnailApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("BDM Thumbnail Generator v0.2.5")
+        self.title(f"BDM Thumbnail Generator v{__version__}")
         self._ui_font_family = _register_ui_font()
         _apply_tk_default_font(self._ui_font_family)
         self.geometry("1500x900")
