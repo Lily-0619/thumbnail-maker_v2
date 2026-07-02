@@ -1,6 +1,6 @@
 Pillow>=10.0.0
 customtkinter>=5.2.0
-requests>=2.31.0
+requests>=2.34.2
 tkinterdnd2>=0.4.0
 
 # Optional: required at runtime by tools/bg_remover for background removal.
