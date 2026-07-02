@@ -4,8 +4,9 @@ text_renderer.py
 縁取り・発光（グロー）エフェクトを含む。
 """
 
-import os
 from pathlib import Path
+
+from core.paths import PROJECT_ROOT
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -90,9 +91,20 @@ def detect_language_category(text: str) -> str:
     return "en"
 
 
+def _project_path(path: str | Path) -> Path:
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _path_exists(path: str | Path) -> bool:
+    return bool(path) and _project_path(path).exists()
+
+
 def _existing_path(paths: list[str]) -> str:
     for path in paths:
-        if path and Path(path).exists():
+        if _path_exists(path):
             return path
     return ""
 
@@ -103,7 +115,7 @@ def resolve_language_font_path(category: str, language_font_paths: dict | None, 
         return language_font_paths[category]
 
     default_category_font = DEFAULT_LANGUAGE_FONT_PATHS.get(category, "")
-    if default_category_font and Path(default_category_font).exists():
+    if default_category_font and _path_exists(default_category_font):
         return default_category_font
 
     category_info = LANGUAGE_FONT_CATEGORIES.get(category, LANGUAGE_FONT_CATEGORIES["en"])
@@ -128,13 +140,13 @@ def load_font(font_path: str, size: int) -> ImageFont.FreeTypeFont:
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     ]
 
-    if font_path and os.path.exists(font_path):
-        return ImageFont.truetype(font_path, size)
+    if font_path and _path_exists(font_path):
+        return ImageFont.truetype(_project_path(font_path), size)
 
     for fb in fallback_paths:
-        if os.path.exists(fb):
+        if _path_exists(fb):
             print(f"[警告] フォントが見つかりません。フォールバック使用: {fb}")
-            return ImageFont.truetype(fb, size)
+            return ImageFont.truetype(_project_path(fb), size)
 
     print("[警告] 日本語フォントが見つかりません。デフォルトフォントを使用します。")
     return ImageFont.load_default()

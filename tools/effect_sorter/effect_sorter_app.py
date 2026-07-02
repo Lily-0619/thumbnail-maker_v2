@@ -59,7 +59,6 @@ UI_FONT_FILE_NAME = "HachiMaruPop-Regular.ttf"
 UI_FONT_FAMILY = "Hachi Maru Pop"
 UI_FONT_CANDIDATES = (
     paths.PROJECT_ROOT / "font" / "JP" / UI_FONT_FILE_NAME,
-    Path("D:/bdm-thumbnail_app_v02/font/JP") / UI_FONT_FILE_NAME,
 )
 
 

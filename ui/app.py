@@ -18,6 +18,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
 from core import ai_image
+from core.paths import PROJECT_ROOT
 from core.composer import build_asset_element_bounds, compose_thumbnail, pick_random_background
 from core.template import list_templates, load_template, save_template
 from core.text_renderer import (
@@ -32,7 +33,7 @@ from ui.preview import PreviewPanel
 
 # ── Theme ──
 ctk.set_appearance_mode("light")
-_THEME_PATH = Path("config/pink_theme.json")
+_THEME_PATH = PROJECT_ROOT / "config" / "pink_theme.json"
 if _THEME_PATH.exists():
     ctk.set_default_color_theme(str(_THEME_PATH))
 else:
@@ -50,14 +51,14 @@ WEEKDAY_LABELS = {
 }
 WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 WEEKDAY_BY_INDEX = WEEKDAY_ORDER
-NODE_OPTIONS_PATH = Path("data/node_options.json")
+NODE_OPTIONS_PATH = PROJECT_ROOT / "data" / "node_options.json"
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 LANGUAGE_FONT_DIRS = {
-    "ja": [Path("font/JP"), Path("font/CN")],
-    "ko": [Path("font/KR")],
-    "zh": [Path("font/CN")],
-    "en": [Path("font/EN"), Path("font/RU")],
-    "ru": [Path("font/RU")],
+    "ja": [PROJECT_ROOT / "font" / "JP", PROJECT_ROOT / "font" / "CN"],
+    "ko": [PROJECT_ROOT / "font" / "KR"],
+    "zh": [PROJECT_ROOT / "font" / "CN"],
+    "en": [PROJECT_ROOT / "font" / "EN", PROJECT_ROOT / "font" / "RU"],
+    "ru": [PROJECT_ROOT / "font" / "RU"],
 }
 ASSET_ELEMENT_LABELS = {
     "character": "Character",
@@ -67,8 +68,7 @@ ASSET_ELEMENT_LABELS = {
 UI_FONT_FILE_NAME = "HachiMaruPop-Regular.ttf"
 UI_FONT_FAMILY = "Hachi Maru Pop"
 UI_FONT_CANDIDATES = (
-    Path("font/JP") / UI_FONT_FILE_NAME,
-    Path("D:/bdm-thumbnail_app_v02/font/JP") / UI_FONT_FILE_NAME,
+    PROJECT_ROOT / "font" / "JP" / UI_FONT_FILE_NAME,
 )
 
 
@@ -118,7 +118,7 @@ FONT_SAMPLE_TEXT = {
 class CharacterPickerDialog(ctk.CTkToplevel):
     """Grid thumbnail picker for character images."""
 
-    CHAR_DIR = Path("material/character")
+    CHAR_DIR = PROJECT_ROOT / "material" / "character"
     THUMB_SIZE = (67, 67)
     COLS = 5
 
@@ -557,7 +557,7 @@ class ThumbnailApp(ctk.CTk):
     def _relative_project_path(self, value: str | Path) -> str:
         try:
             path = Path(value).resolve()
-            return path.relative_to(Path.cwd().resolve()).as_posix()
+            return path.relative_to(PROJECT_ROOT).as_posix()
         except (OSError, ValueError):
             return str(value)
 
@@ -570,7 +570,7 @@ class ThumbnailApp(ctk.CTk):
             for path in sorted(font_dir.iterdir(), key=lambda item: item.name.lower()):
                 if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
                     continue
-                rel_path = path.as_posix()
+                rel_path = self._relative_project_path(path)
                 if rel_path not in seen:
                     values.append(rel_path)
                     seen.add(rel_path)
@@ -627,7 +627,7 @@ class ThumbnailApp(ctk.CTk):
         path = Path(value)
         if path.is_absolute():
             return path
-        return Path.cwd() / path
+        return PROJECT_ROOT / path
 
     def _update_character_preview(self):
         if not hasattr(self, "character_preview_label"):
@@ -913,9 +913,9 @@ class ThumbnailApp(ctk.CTk):
         if not value:
             return ""
         try:
-            path = Path(value)
+            path = self._project_path(value).resolve()
             if path.exists():
-                return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+                return path.relative_to(PROJECT_ROOT).as_posix()
         except (OSError, ValueError):
             pass
         return value
@@ -1297,7 +1297,7 @@ class ThumbnailApp(ctk.CTk):
             node = self.node_entry.get().replace(" ", "_").replace("　", "_")
             name = f"{date_str}_{node}" if node else f"{date_str}_thumbnail"
 
-        out_dir = Path("outputs")
+        out_dir = PROJECT_ROOT / "outputs"
         out_dir.mkdir(exist_ok=True)
         out_path = out_dir / f"{name}.png"
 
