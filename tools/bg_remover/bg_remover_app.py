@@ -109,7 +109,7 @@ class BgRemoverApp(DnDCTk):
         ).pack(anchor="w", padx=16, pady=(12, 0))
         ctk.CTkLabel(
             self,
-            text=f"出力：{paths.OUTPUT_DIR}　（取り込み→一時保存／💾でPNGは PNG\\・元画像は 処理済み\\ へ）",
+            text=f"出力：{paths.OUTPUT_DIR}　（複数枚は「🚀 一括処理」でまとめて／💾でPNGは PNG\\・元画像は 処理済み\\ へ）",
             font=ctk.CTkFont(size=11), text_color="#7a3b5a", anchor="w",
         ).pack(anchor="w", padx=16, pady=(0, 6))
 
