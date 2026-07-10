@@ -11,7 +11,9 @@ bdm-thumbnail_app_v02 の pink_theme / HachiMaruPop があれば使い、無け�
 """
 
 import ctypes
+import os
 import platform
+import subprocess
 import sys
 from pathlib import Path
 import tkinter.font as tkfont
@@ -21,6 +23,45 @@ import tkinter.font as tkfont
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+
+# ── 依存(rembg等)の入った .venv で確実に起動する ─────────────────────
+# .py を直接ダブルクリックしたり、システムの別Pythonから起動されると rembg が
+# 見つからず「未導入」になる。その場合はプロジェクトの .venv の python を探して
+# 自動で起動し直す（どんな起動方法でも“確実に動く”ようにするため）。
+def _relaunch_in_project_venv() -> None:
+    import importlib.util
+
+    try:
+        if importlib.util.find_spec("rembg") is not None:
+            return  # すでに依存が揃った環境（= 正しい .venv 等）で動いている
+    except Exception:
+        pass
+    if os.environ.get("BG_REMOVER_RELAUNCHED") == "1":
+        return  # 再起動済み。ループ防止（.venv でも無ければ通常起動しメッセージ表示）
+
+    exe_rels = ("Scripts/python.exe", "Scripts/pythonw.exe", "bin/python", "bin/python3")
+    for parent in (HERE, *HERE.parents):
+        venv = parent / ".venv"
+        if not venv.is_dir():
+            continue
+        for rel in exe_rels:
+            cand = venv / rel
+            if not cand.exists():
+                continue
+            try:
+                same = cand.resolve() == Path(sys.executable).resolve()
+            except OSError:
+                same = False
+            if same:
+                return  # 既に .venv の python。それでも無いなら諦めてメッセージ表示
+            env = dict(os.environ, BG_REMOVER_RELAUNCHED="1")
+            script = str(Path(__file__).resolve())
+            subprocess.Popen([str(cand), script, *sys.argv[1:]], env=env)
+            raise SystemExit(0)
+        break  # .venv はあるが python 実行体が無い → これ以上探さない
+
+
+_relaunch_in_project_venv()
 
 import customtkinter as ctk  # noqa: E402
 
